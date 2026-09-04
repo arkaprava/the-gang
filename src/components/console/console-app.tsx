@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useEffect, useMemo, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogoMark } from "@/components/logo-mark";
@@ -85,10 +84,23 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
   const cost = useMemo(() => estimateRunCost(models, skills.length), [models, skills.length]);
 
   async function refreshWorkspace() {
-    const res = await fetch("/api/workspace");
+    const res = await fetch("/api/workspace", { cache: "no-store" });
     if (!res.ok) throw new Error("Could not load workspace");
     setWorkspace(await res.json());
   }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/workspace", { cache: "no-store", signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: Workspace | null) => {
+        if (data) setWorkspace(data);
+      })
+      .catch(() => {
+        /* aborted or offline */
+      });
+    return () => controller.abort();
+  }, []);
 
   async function startPipeline() {
     setBusy(true);
@@ -96,6 +108,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
     try {
       const res = await fetch("/api/runs", {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ description, models, skills }),
       });
@@ -118,6 +131,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
     try {
       const res = await fetch(`/api/runs/${run.id}/decision`, {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
@@ -136,7 +150,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
   }
 
   async function openRun(id: string) {
-    const res = await fetch(`/api/runs/${id}`);
+    const res = await fetch(`/api/runs/${id}`, { cache: "no-store" });
     const json = await res.json();
     if (res.ok) {
       setRun(json.run);
@@ -167,7 +181,13 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
 
       <main className="mx-auto grid w-full max-w-[1600px] flex-1 gap-5 p-4 md:p-6 xl:grid-cols-[320px_minmax(0,1fr)_340px]">
         <aside className="flex flex-col gap-4">
-          <section className="rounded-2xl border border-nova-border bg-nova-bg1 p-4">
+          <form
+            className="rounded-2xl border border-nova-border bg-nova-bg1 p-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void startPipeline();
+            }}
+          >
             <div className="mb-3 font-mono text-[11px] tracking-[0.12em] text-nova-purple uppercase">
               Describe what to ship
             </div>
@@ -254,14 +274,14 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
 
             {error ? <p className="mt-3 text-sm text-orange-300">{error}</p> : null}
 
-            <Button
-              className="mt-4 h-11 w-full rounded-xl text-sm font-semibold"
-              onClick={startPipeline}
+            <button
+              type="submit"
               disabled={busy}
+              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
             >
               {busy && !run?.decision ? "Running squad…" : "Run Nova pipeline"}
-            </Button>
-          </section>
+            </button>
+          </form>
 
           <section className="rounded-2xl border border-nova-border bg-nova-bg1 p-4">
             <div className="mb-3 font-mono text-[11px] tracking-[0.12em] text-nova-purple uppercase">
@@ -356,17 +376,22 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
               </div>
               <p className="mt-1 text-sm text-nova-text">{run.decision.prompt}</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button className="h-10 rounded-lg px-4 font-semibold" onClick={() => void decide("approve")} disabled={busy}>
+                <button
+                  type="button"
+                  className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
+                  onClick={() => void decide("approve")}
+                  disabled={busy}
+                >
                   {busy ? "Continuing…" : "Approve and continue"}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-10 rounded-lg border-nova-border-lit"
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-10 items-center justify-center rounded-lg border border-nova-border-lit px-4 text-sm font-medium text-nova-muted hover:text-nova-text disabled:opacity-50"
                   onClick={() => void decide("reject")}
                   disabled={busy}
                 >
                   Reject
-                </Button>
+                </button>
               </div>
             </div>
           ) : null}

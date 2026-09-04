@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { DataField, PreviewSpec } from "@/lib/nova/types";
@@ -158,9 +157,12 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
             {error}
           </p>
         ) : null}
-        <Button type="submit" className="h-10 w-fit rounded-lg px-4 font-semibold">
+        <button
+          type="submit"
+          className="inline-flex h-10 w-fit items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80"
+        >
           Save {spec.entityName}
-        </Button>
+        </button>
       </form>
 
       <div className="grid gap-3">
@@ -174,15 +176,14 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
             />
           ) : null}
           {spec.features.exportCsv ? (
-            <Button
+            <button
               type="button"
-              variant="outline"
-              className="h-10 rounded-lg border-nova-border-lit"
+              className="inline-flex h-10 items-center justify-center rounded-lg border border-nova-border-lit px-4 text-sm disabled:opacity-50"
               onClick={exportCsv}
               disabled={!visible.length}
             >
               Export CSV
-            </Button>
+            </button>
           ) : null}
         </div>
 
