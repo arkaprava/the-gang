@@ -1,11 +1,31 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import type { DataField, PreviewSpec } from "@/lib/nova/types";
 
 type RecordRow = Record<string, string> & { id: string; createdAt: string };
+
+function storageKeyFor(slug: string) {
+  return `nova-preview:${slug}`;
+}
+
+function loadRows(slug: string): RecordRow[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = sessionStorage.getItem(storageKeyFor(slug));
+    return raw ? (JSON.parse(raw) as RecordRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistRows(slug: string, rows: RecordRow[]) {
+  try {
+    sessionStorage.setItem(storageKeyFor(slug), JSON.stringify(rows));
+  } catch {
+    /* ignore quota */
+  }
+}
 
 function validate(fields: DataField[], values: Record<string, string>) {
   const errors: string[] = [];
@@ -27,6 +47,10 @@ function validate(fields: DataField[], values: Record<string, string>) {
   return errors;
 }
 
+function emptyDraft(fields: DataField[]) {
+  return Object.fromEntries(fields.map((field) => [field.name, field.type === "boolean" ? "false" : ""]));
+}
+
 function FieldControl({
   field,
   value,
@@ -37,23 +61,19 @@ function FieldControl({
   onChange: (value: string) => void;
 }) {
   const className =
-    "h-10 rounded-lg border-nova-border-lit bg-nova-bg2 text-sm text-nova-text dark:bg-nova-bg2";
+    "h-10 w-full rounded-lg border border-nova-border-lit bg-nova-bg2 px-3 text-sm text-nova-text outline-none focus:border-nova-purple";
   if (field.type === "text") {
     return (
-      <Textarea
+      <textarea
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="min-h-20 rounded-lg border-nova-border-lit bg-nova-bg2 dark:bg-nova-bg2"
+        className="min-h-20 w-full rounded-lg border border-nova-border-lit bg-nova-bg2 px-3 py-2 text-sm text-nova-text outline-none focus:border-nova-purple"
       />
     );
   }
   if (field.type === "select") {
     return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${className} w-full px-3`}
-      >
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={className}>
         <option value="">Select…</option>
         {(field.options ?? []).map((option) => (
           <option key={option} value={option}>
@@ -75,9 +95,11 @@ function FieldControl({
       </label>
     );
   }
+  const inputType =
+    field.type === "email" ? "email" : field.type === "number" ? "number" : field.type === "date" ? "date" : "text";
   return (
-    <Input
-      type={field.type === "email" ? "email" : field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+    <input
+      type={inputType}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={className}
@@ -86,36 +108,41 @@ function FieldControl({
 }
 
 export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
-  const blank = useMemo(
-    () => Object.fromEntries(spec.fields.map((field) => [field.name, field.type === "boolean" ? "false" : ""])),
-    [spec.fields]
-  );
+  const blank = useMemo(() => emptyDraft(spec.fields), [spec.fields]);
   const [draft, setDraft] = useState<Record<string, string>>(blank);
-  const [rows, setRows] = useState<RecordRow[]>([]);
+  const [rows, setRows] = useState<RecordRow[]>(() => loadRows(spec.slug));
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
 
-  const visible = rows.filter((row) => {
-    if (!query.trim()) return true;
-    return JSON.stringify(row).toLowerCase().includes(query.toLowerCase());
-  });
+  const visible = query.trim()
+    ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()))
+    : rows;
 
   function saveRecord() {
     const errors = validate(spec.fields, draft);
     if (errors.length) {
       setError(errors.join(". "));
+      setFlash(null);
       return;
     }
+    const next: RecordRow = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      ...draft,
+    };
+    const nextRows = [next, ...rows];
     setError(null);
-    setRows((current) => [
-      {
-        id: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        ...draft,
-      },
-      ...current,
-    ]);
-    setDraft(blank);
+    setRows(nextRows);
+    persistRows(spec.slug, nextRows);
+    setDraft(emptyDraft(spec.fields));
+    setFlash(`Saved ${next[spec.fields[0]?.name] || spec.entityName}.`);
+  }
+
+  function removeRow(id: string) {
+    const nextRows = rows.filter((row) => row.id !== id);
+    setRows(nextRows);
+    persistRows(spec.slug, nextRows);
   }
 
   function exportCsv() {
@@ -156,6 +183,11 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
             {error}
           </p>
         ) : null}
+        {flash ? (
+          <p role="status" className="text-sm text-nova-green">
+            {flash}
+          </p>
+        ) : null}
         <button
           type="button"
           className="inline-flex h-10 w-fit items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80"
@@ -168,11 +200,11 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {spec.features.search ? (
-            <Input
+            <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={`Search ${spec.entityPlural.toLowerCase()}…`}
-              className="h-10 max-w-sm rounded-lg border-nova-border-lit bg-nova-bg2 dark:bg-nova-bg2"
+              className="h-10 max-w-sm rounded-lg border border-nova-border-lit bg-nova-bg2 px-3 text-sm text-nova-text outline-none"
             />
           ) : null}
           {spec.features.exportCsv ? (
@@ -185,6 +217,9 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
               Export CSV
             </button>
           ) : null}
+          <span className="font-mono text-[11px] text-nova-dim">
+            {rows.length} {spec.entityPlural.toLowerCase()}
+          </span>
         </div>
 
         {visible.length === 0 ? (
@@ -221,7 +256,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
                         <button
                           type="button"
                           className="text-xs text-nova-muted hover:text-nova-text"
-                          onClick={() => setRows((current) => current.filter((item) => item.id !== row.id))}
+                          onClick={() => removeRow(row.id)}
                         >
                           Remove
                         </button>

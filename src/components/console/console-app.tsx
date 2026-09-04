@@ -117,6 +117,7 @@ export function ConsoleApp({
   const [models, setModels] = useState(DEFAULT_MODELS);
   const [skills, setSkills] = useState<string[]>(initialRun?.skills ?? ["code-review"]);
   const [filePath, setFilePath] = useState<string | null>(initialRun?.dev?.files[0]?.path ?? null);
+  const [artifactTab, setArtifactTab] = useState("preview");
 
   const cost = useMemo(() => estimateRunCost(models, skills.length), [models, skills.length]);
   const activeFile = run?.dev?.files.find((file) => file.path === filePath) ?? run?.dev?.files[0];
@@ -365,7 +366,12 @@ export function ConsoleApp({
                 </p>
               </div>
             ) : (
-              <Tabs key={run.id} defaultValue="preview" className="gap-4">
+              <Tabs
+                key={run.id}
+                value={artifactTab}
+                onValueChange={(value) => setArtifactTab(String(value))}
+                className="gap-4"
+              >
                 <TabsList variant="line" className="flex w-full flex-wrap justify-start gap-1">
                   <TabsTrigger value="preview">Preview</TabsTrigger>
                   <TabsTrigger value="plan">Plan</TabsTrigger>
