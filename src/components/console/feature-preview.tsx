@@ -100,8 +100,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
     return JSON.stringify(row).toLowerCase().includes(query.toLowerCase());
   });
 
-  function onCreate(e: React.FormEvent) {
-    e.preventDefault();
+  function saveRecord() {
     const errors = validate(spec.fields, draft);
     if (errors.length) {
       setError(errors.join(". "));
@@ -137,7 +136,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
 
   return (
     <div className="grid gap-5">
-      <form onSubmit={onCreate} className="grid gap-3 rounded-xl border border-nova-border bg-nova-bg2/50 p-4">
+      <div className="grid gap-3 rounded-xl border border-nova-border bg-nova-bg2/50 p-4">
         <div className="text-sm font-semibold">New {spec.entityName}</div>
         {spec.fields.map((field) => (
           <label key={field.name} className="grid gap-1.5">
@@ -158,12 +157,13 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
           </p>
         ) : null}
         <button
-          type="submit"
+          type="button"
           className="inline-flex h-10 w-fit items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80"
+          onClick={saveRecord}
         >
           Save {spec.entityName}
         </button>
-      </form>
+      </div>
 
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center gap-2">
