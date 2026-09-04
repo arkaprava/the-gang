@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import { useFormStatus } from "react-dom";
+import { decidePipelineAction, startPipelineAction } from "@/app/actions";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogoMark } from "@/components/logo-mark";
@@ -71,93 +74,51 @@ function stageStatus(run: Run | null, key: (typeof STAGES)[number]["key"]) {
   return "queued";
 }
 
-export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }) {
-  const [workspace, setWorkspace] = useState<Workspace>(initialWorkspace);
-  const [run, setRun] = useState<Run | null>(null);
-  const [description, setDescription] = useState(EXAMPLES[0]);
+function RunSubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button
+      type="submit"
+      disabled={pending}
+      className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
+    >
+      {pending ? "Running squad…" : "Run Nova pipeline"}
+    </button>
+  );
+}
+
+function DecideSubmitButton({
+  label,
+  pendingLabel,
+  className,
+}: {
+  label: string;
+  pendingLabel: string;
+  className: string;
+}) {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" disabled={pending} className={className}>
+      {pending ? pendingLabel : label}
+    </button>
+  );
+}
+
+export function ConsoleApp({
+  initialWorkspace,
+  initialRun = null,
+}: {
+  initialWorkspace: Workspace;
+  initialRun?: Run | null;
+}) {
+  const workspace = initialWorkspace;
+  const run = initialRun;
+  const [description, setDescription] = useState(initialRun?.description ?? EXAMPLES[0]);
   const [models, setModels] = useState(DEFAULT_MODELS);
-  const [skills, setSkills] = useState<string[]>(["code-review"]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [filePath, setFilePath] = useState<string | null>(null);
+  const [skills, setSkills] = useState<string[]>(initialRun?.skills ?? ["code-review"]);
+  const [filePath, setFilePath] = useState<string | null>(initialRun?.dev?.files[0]?.path ?? null);
 
   const cost = useMemo(() => estimateRunCost(models, skills.length), [models, skills.length]);
-
-  async function refreshWorkspace() {
-    const res = await fetch("/api/workspace", { cache: "no-store" });
-    if (!res.ok) throw new Error("Could not load workspace");
-    setWorkspace(await res.json());
-  }
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/workspace", { cache: "no-store", signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: Workspace | null) => {
-        if (data) setWorkspace(data);
-      })
-      .catch(() => {
-        /* aborted or offline */
-      });
-    return () => controller.abort();
-  }, []);
-
-  async function startPipeline() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/runs", {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, models, skills }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Could not start pipeline");
-      setRun(json.run);
-      setFilePath(json.run.dev?.files[0]?.path ?? null);
-      await refreshWorkspace();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start pipeline");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function decide(action: "approve" | "reject") {
-    if (!run) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/runs/${run.id}/decision`, {
-        method: "POST",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Decision failed");
-      setRun(json.run);
-      if (json.run.dev?.files[0] && !filePath) {
-        setFilePath(json.run.dev.files[0].path);
-      }
-      await refreshWorkspace();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Decision failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function openRun(id: string) {
-    const res = await fetch(`/api/runs/${id}`, { cache: "no-store" });
-    const json = await res.json();
-    if (res.ok) {
-      setRun(json.run);
-      setFilePath(json.run.dev?.files[0]?.path ?? null);
-    }
-  }
-
   const activeFile = run?.dev?.files.find((file) => file.path === filePath) ?? run?.dev?.files[0];
 
   return (
@@ -183,15 +144,15 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
         <aside className="flex flex-col gap-4">
           <form
             className="rounded-2xl border border-nova-border bg-nova-bg1 p-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void startPipeline();
-            }}
+            action={startPipelineAction}
           >
             <div className="mb-3 font-mono text-[11px] tracking-[0.12em] text-nova-purple uppercase">
               Describe what to ship
             </div>
             <Textarea
+              name="description"
+              required
+              minLength={8}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="min-h-28 rounded-xl border-nova-border-lit bg-nova-bg2 text-sm dark:bg-nova-bg2"
@@ -215,6 +176,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
                 <label key={role} className="flex items-center justify-between gap-2 text-xs">
                   <span className="text-nova-muted">{role}</span>
                   <select
+                    name={`model-${role}`}
                     value={models[role]}
                     onChange={(e) =>
                       setModels((current) => ({ ...current, [role]: e.target.value as LlmId }))
@@ -241,6 +203,8 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
                   <label key={skill.id} className="flex items-start gap-2 text-xs">
                     <input
                       type="checkbox"
+                      name="skills"
+                      value={skill.id}
                       className="mt-0.5"
                       checked={checked}
                       onChange={() =>
@@ -272,15 +236,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
               <p className="mt-2 text-[11px] leading-5 text-nova-dim">{cost.notes}</p>
             </div>
 
-            {error ? <p className="mt-3 text-sm text-orange-300">{error}</p> : null}
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {busy && !run?.decision ? "Running squad…" : "Run Nova pipeline"}
-            </button>
+            <RunSubmitButton />
           </form>
 
           <section className="rounded-2xl border border-nova-border bg-nova-bg1 p-4">
@@ -292,10 +248,9 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
                 <p className="text-sm text-nova-dim">No features yet. The first run seeds company memory.</p>
               ) : (
                 workspace?.runs.map((item) => (
-                  <button
+                  <Link
                     key={item.id}
-                    type="button"
-                    onClick={() => void openRun(item.id)}
+                    href={`/?run=${item.id}`}
                     className={cn(
                       "rounded-xl border px-3 py-2 text-left text-sm transition",
                       run?.id === item.id
@@ -307,7 +262,7 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
                     <div className="mt-1 font-mono text-[10px] text-nova-dim uppercase">
                       {item.status} · {item.currentStage}
                     </div>
-                  </button>
+                  </Link>
                 ))
               )}
             </div>
@@ -376,22 +331,24 @@ export function ConsoleApp({ initialWorkspace }: { initialWorkspace: Workspace }
               </div>
               <p className="mt-1 text-sm text-nova-text">{run.decision.prompt}</p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
-                  onClick={() => void decide("approve")}
-                  disabled={busy}
-                >
-                  {busy ? "Continuing…" : "Approve and continue"}
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex h-10 items-center justify-center rounded-lg border border-nova-border-lit px-4 text-sm font-medium text-nova-muted hover:text-nova-text disabled:opacity-50"
-                  onClick={() => void decide("reject")}
-                  disabled={busy}
-                >
-                  Reject
-                </button>
+                <form action={decidePipelineAction}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <input type="hidden" name="decision" value="approve" />
+                  <DecideSubmitButton
+                    label="Approve and continue"
+                    pendingLabel="Continuing…"
+                    className="inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80 disabled:opacity-50"
+                  />
+                </form>
+                <form action={decidePipelineAction}>
+                  <input type="hidden" name="runId" value={run.id} />
+                  <input type="hidden" name="decision" value="reject" />
+                  <DecideSubmitButton
+                    label="Reject"
+                    pendingLabel="Stopping…"
+                    className="inline-flex h-10 items-center justify-center rounded-lg border border-nova-border-lit px-4 text-sm font-medium text-nova-muted hover:text-nova-text disabled:opacity-50"
+                  />
+                </form>
               </div>
             </div>
           ) : null}

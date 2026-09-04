@@ -6,7 +6,6 @@ import type { MemoryEntry, Run, StoreShape } from "./types";
 const DATA_DIR = path.join(process.cwd(), ".data");
 const DATA_FILE = path.join(DATA_DIR, "nova.json");
 
-let cache: StoreShape | null = null;
 let lock: Promise<unknown> = Promise.resolve();
 
 function withLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -31,24 +30,22 @@ function seed(): StoreShape {
 }
 
 async function readStore(): Promise<StoreShape> {
-  if (cache) return cache;
   try {
     const raw = await readFile(DATA_FILE, "utf8");
-    cache = JSON.parse(raw) as StoreShape;
-    cache.runs ??= [];
-    cache.memory ??= [];
-    return cache;
+    const store = JSON.parse(raw) as StoreShape;
+    store.runs ??= [];
+    store.memory ??= [];
+    return store;
   } catch {
-    cache = seed();
-    await persist(cache);
-    return cache;
+    const seeded = seed();
+    await persist(seeded);
+    return seeded;
   }
 }
 
 async function persist(store: StoreShape) {
   await mkdir(DATA_DIR, { recursive: true });
   await writeFile(DATA_FILE, JSON.stringify(store, null, 2), "utf8");
-  cache = store;
 }
 
 export async function getStore() {
