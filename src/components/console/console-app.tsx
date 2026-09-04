@@ -380,7 +380,7 @@ export function ConsoleApp({
                   <TabsTrigger value="qa">QA</TabsTrigger>
                   <TabsTrigger value="log">Log</TabsTrigger>
                 </TabsList>
-                <TabsContent value="preview">
+                <TabsContent value="preview" keepMounted>
                   {run.dev ? (
                     <FeaturePreview spec={run.dev.preview} />
                   ) : (
