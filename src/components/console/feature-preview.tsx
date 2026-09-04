@@ -1,11 +1,19 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState } from "react";
 import type { DataField, PreviewSpec } from "@/lib/nova/types";
 
 type RecordRow = Record<string, string> & { id: string; createdAt: string };
 
-const rowMemory = new Map<string, RecordRow[]>();
+type PreviewGlobals = typeof globalThis & {
+  __novaPreviewRows?: Map<string, RecordRow[]>;
+};
+
+function memoryRoot() {
+  const g = globalThis as PreviewGlobals;
+  if (!g.__novaPreviewRows) g.__novaPreviewRows = new Map();
+  return g.__novaPreviewRows;
+}
 
 function storageKeyFor(slug: string) {
   return `nova-preview:${slug}`;
@@ -14,7 +22,7 @@ function storageKeyFor(slug: string) {
 function loadRows(slug: string): RecordRow[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = sessionStorage.getItem(storageKeyFor(slug));
+    const raw = window.localStorage.getItem(storageKeyFor(slug));
     return raw ? (JSON.parse(raw) as RecordRow[]) : [];
   } catch {
     return [];
@@ -22,19 +30,19 @@ function loadRows(slug: string): RecordRow[] {
 }
 
 function persistRows(slug: string, rows: RecordRow[]) {
-  rowMemory.set(slug, rows);
+  memoryRoot().set(slug, rows);
   try {
-    sessionStorage.setItem(storageKeyFor(slug), JSON.stringify(rows));
+    window.localStorage.setItem(storageKeyFor(slug), JSON.stringify(rows));
   } catch {
     /* ignore quota */
   }
 }
 
 function rowsFor(slug: string): RecordRow[] {
-  const cached = rowMemory.get(slug);
+  const cached = memoryRoot().get(slug);
   if (cached) return cached;
   const loaded = loadRows(slug);
-  rowMemory.set(slug, loaded);
+  memoryRoot().set(slug, loaded);
   return loaded;
 }
 
@@ -58,17 +66,29 @@ function validate(fields: DataField[], values: Record<string, string>) {
   return errors;
 }
 
-function readDraft(form: HTMLFormElement, fields: DataField[]) {
-  const data = new FormData(form);
+function readDraft(root: HTMLElement, fields: DataField[]) {
   return Object.fromEntries(
     fields.map((field) => {
-      if (field.type === "boolean") {
-        const raw = data.get(field.name);
-        return [field.name, raw === "true" || raw === "on" ? "true" : "false"];
+      const el = root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+        `[name="${CSS.escape(field.name)}"]`
+      );
+      if (!el) return [field.name, ""];
+      if (field.type === "boolean" && el instanceof HTMLInputElement) {
+        return [field.name, el.checked ? "true" : "false"];
       }
-      return [field.name, String(data.get(field.name) ?? "")];
+      return [field.name, el.value];
     })
   );
+}
+
+function clearDraft(root: HTMLElement) {
+  for (const el of root.querySelectorAll("input, textarea, select")) {
+    if (el instanceof HTMLInputElement && el.type === "checkbox") {
+      el.checked = false;
+    } else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+      el.value = "";
+    }
+  }
 }
 
 function FieldControl({ field }: { field: DataField }) {
@@ -108,6 +128,7 @@ function FieldControl({ field }: { field: DataField }) {
 }
 
 export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
+  const fieldsRef = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<RecordRow[]>(() => rowsFor(spec.slug));
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -117,11 +138,10 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
     ? rows.filter((row) => JSON.stringify(row).toLowerCase().includes(query.toLowerCase()))
     : rows;
 
-  function saveRecord(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    const form = event.currentTarget;
-    const draft = readDraft(form, spec.fields);
+  function saveRecord() {
+    const root = fieldsRef.current;
+    if (!root) return;
+    const draft = readDraft(root, spec.fields);
     const errors = validate(spec.fields, draft);
     if (errors.length) {
       setError(errors.join(". "));
@@ -137,7 +157,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
     persistRows(spec.slug, nextRows);
     setError(null);
     setRows(nextRows);
-    form.reset();
+    clearDraft(root);
     setFlash(`Saved ${next[spec.fields[0]?.name] || spec.entityName}.`);
   }
 
@@ -165,11 +185,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
 
   return (
     <div className="grid gap-5">
-      <form
-        className="grid gap-3 rounded-xl border border-nova-border bg-nova-bg2/50 p-4"
-        method="dialog"
-        onSubmit={saveRecord}
-      >
+      <div ref={fieldsRef} className="grid gap-3 rounded-xl border border-nova-border bg-nova-bg2/50 p-4">
         <div className="text-sm font-semibold">New {spec.entityName}</div>
         {spec.fields.map((field) => (
           <label key={field.name} className="grid gap-1.5">
@@ -191,12 +207,13 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
           </p>
         ) : null}
         <button
-          type="submit"
+          type="button"
           className="inline-flex h-10 w-fit items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/80"
+          onClick={saveRecord}
         >
           Save {spec.entityName}
         </button>
-      </form>
+      </div>
 
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -218,7 +235,7 @@ export function FeaturePreview({ spec }: { spec: PreviewSpec }) {
               Export CSV
             </button>
           ) : null}
-          <span className="font-mono text-[11px] text-nova-dim">
+          <span data-preview-count={rows.length} className="font-mono text-[11px] text-nova-dim">
             {rows.length} {spec.entityPlural.toLowerCase()}
           </span>
         </div>

@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { decidePipelineAction, startPipelineAction } from "@/app/actions";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { LogoMark } from "@/components/logo-mark";
 import { FeaturePreview } from "@/components/console/feature-preview";
 import {
@@ -47,6 +46,15 @@ const EXAMPLES = [
   "Bug tracker with title, severity, status, notes, and search",
   "Office inventory log with item name, quantity, category, and due date",
 ];
+
+const ARTIFACT_TABS = [
+  { id: "preview", label: "Preview" },
+  { id: "plan", label: "Plan" },
+  { id: "arch", label: "Architecture" },
+  { id: "code", label: "Code" },
+  { id: "qa", label: "QA" },
+  { id: "log", label: "Log" },
+] as const;
 
 const STAGES = [
   { key: "PO", label: "PO Planning", role: "Product Owner", tone: "text-nova-purple border-nova-purple-mid bg-nova-purple-dim" },
@@ -366,21 +374,25 @@ export function ConsoleApp({
                 </p>
               </div>
             ) : (
-              <Tabs
-                key={run.id}
-                value={artifactTab}
-                onValueChange={(value) => setArtifactTab(String(value))}
-                className="gap-4"
-              >
-                <TabsList variant="line" className="flex w-full flex-wrap justify-start gap-1">
-                  <TabsTrigger value="preview">Preview</TabsTrigger>
-                  <TabsTrigger value="plan">Plan</TabsTrigger>
-                  <TabsTrigger value="arch">Architecture</TabsTrigger>
-                  <TabsTrigger value="code">Code</TabsTrigger>
-                  <TabsTrigger value="qa">QA</TabsTrigger>
-                  <TabsTrigger value="log">Log</TabsTrigger>
-                </TabsList>
-                <TabsContent value="preview" keepMounted>
+              <div className="grid gap-4">
+                <div className="flex w-full flex-wrap justify-start gap-1 border-b border-nova-border pb-1">
+                  {ARTIFACT_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setArtifactTab(tab.id)}
+                      className={cn(
+                        "relative inline-flex h-8 items-center px-2.5 text-sm font-medium",
+                        artifactTab === tab.id
+                          ? "text-nova-text after:absolute after:inset-x-0 after:bottom-[-5px] after:h-0.5 after:bg-foreground"
+                          : "text-nova-muted hover:text-nova-text"
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+                <div hidden={artifactTab !== "preview"}>
                   {run.dev ? (
                     <FeaturePreview spec={run.dev.preview} />
                   ) : (
@@ -388,8 +400,8 @@ export function ConsoleApp({
                       Preview unlocks after the Developer agent ships files. Approve the PO plan to continue.
                     </p>
                   )}
-                </TabsContent>
-                <TabsContent value="plan">
+                </div>
+                <div hidden={artifactTab !== "plan"}>
                   {run.po ? (
                     <div className="grid gap-4">
                       <div>
@@ -435,8 +447,8 @@ export function ConsoleApp({
                   ) : (
                     <p className="text-sm text-nova-muted">Product Owner is still writing.</p>
                   )}
-                </TabsContent>
-                <TabsContent value="arch">
+                </div>
+                <div hidden={artifactTab !== "arch"}>
                   {run.ba ? (
                     <div className="grid gap-4">
                       <div className="grid gap-2 md:grid-cols-3">
@@ -470,8 +482,8 @@ export function ConsoleApp({
                   ) : (
                     <p className="text-sm text-nova-muted">Architecture appears after you approve the plan.</p>
                   )}
-                </TabsContent>
-                <TabsContent value="code">
+                </div>
+                <div hidden={artifactTab !== "code"}>
                   {run.dev ? (
                     <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
                       <div className="grid h-fit gap-1">
@@ -498,8 +510,8 @@ export function ConsoleApp({
                   ) : (
                     <p className="text-sm text-nova-muted">Code is generated after plan approval.</p>
                   )}
-                </TabsContent>
-                <TabsContent value="qa">
+                </div>
+                <div hidden={artifactTab !== "qa"}>
                   {run.qa ? (
                     <div className="grid gap-4">
                       <div className="flex flex-wrap gap-4">
@@ -544,8 +556,8 @@ export function ConsoleApp({
                   ) : (
                     <p className="text-sm text-nova-muted">QA runs after you approve the generated code.</p>
                   )}
-                </TabsContent>
-                <TabsContent value="log">
+                </div>
+                <div hidden={artifactTab !== "log"}>
                   <div className="grid max-h-[520px] gap-2 overflow-auto">
                     {run.events.map((item, index) => (
                       <div key={`${item.at}-${index}`} className="flex gap-3 font-mono text-[12px]">
@@ -557,8 +569,8 @@ export function ConsoleApp({
                       </div>
                     ))}
                   </div>
-                </TabsContent>
-              </Tabs>
+                </div>
+              </div>
             )}
           </div>
         </section>
