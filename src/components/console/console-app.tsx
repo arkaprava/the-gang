@@ -401,8 +401,7 @@ export function ConsoleApp({
                     </p>
                   )}
                 </div>
-                <div hidden={artifactTab !== "plan"}>
-                  {run.po ? (
+                {artifactTab === "plan" && (run.po ? (
                     <div className="grid gap-4">
                       <div>
                         <h2 className="text-lg font-bold">{run.po.epic}</h2>
@@ -446,10 +445,8 @@ export function ConsoleApp({
                     </div>
                   ) : (
                     <p className="text-sm text-nova-muted">Product Owner is still writing.</p>
-                  )}
-                </div>
-                <div hidden={artifactTab !== "arch"}>
-                  {run.ba ? (
+                  ))}
+                {artifactTab === "arch" && (run.ba ? (
                     <div className="grid gap-4">
                       <div className="grid gap-2 md:grid-cols-3">
                         {run.ba.stack.map((item) => (
@@ -481,10 +478,8 @@ export function ConsoleApp({
                     </div>
                   ) : (
                     <p className="text-sm text-nova-muted">Architecture appears after you approve the plan.</p>
-                  )}
-                </div>
-                <div hidden={artifactTab !== "code"}>
-                  {run.dev ? (
+                  ))}
+                {artifactTab === "code" && (run.dev ? (
                     <div className="grid gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
                       <div className="grid h-fit gap-1">
                         {run.dev.files.map((file) => (
@@ -509,10 +504,8 @@ export function ConsoleApp({
                     </div>
                   ) : (
                     <p className="text-sm text-nova-muted">Code is generated after plan approval.</p>
-                  )}
-                </div>
-                <div hidden={artifactTab !== "qa"}>
-                  {run.qa ? (
+                  ))}
+                {artifactTab === "qa" && (run.qa ? (
                     <div className="grid gap-4">
                       <div className="flex flex-wrap gap-4">
                         <div>
@@ -555,13 +548,12 @@ export function ConsoleApp({
                     </div>
                   ) : (
                     <p className="text-sm text-nova-muted">QA runs after you approve the generated code.</p>
-                  )}
-                </div>
-                <div hidden={artifactTab !== "log"}>
+                  ))}
+                {artifactTab === "log" && (
                   <div className="grid max-h-[520px] gap-2 overflow-auto">
                     {run.events.map((item, index) => (
                       <div key={`${item.at}-${index}`} className="flex gap-3 font-mono text-[12px]">
-                        <span className="shrink-0 text-nova-dim">
+                        <span className="shrink-0 text-nova-dim" suppressHydrationWarning>
                           {new Date(item.at).toLocaleTimeString()}
                         </span>
                         <span className="w-14 shrink-0 text-nova-purple">{item.role}</span>
@@ -569,7 +561,7 @@ export function ConsoleApp({
                       </div>
                     ))}
                   </div>
-                </div>
+                )}
               </div>
             )}
           </div>
