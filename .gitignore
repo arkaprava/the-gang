@@ -36,6 +36,7 @@ yarn-error.log*
 
 # the gang workspace data
 .data/
+shipped/
 
 # vercel
 .vercel
