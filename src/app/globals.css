@@ -160,3 +160,13 @@
     display: none;
   }
 }
+
+.gang-crt {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 0),
+    rgb(0 0 0 / 0) 2px,
+    rgb(0 0 0 / 0.18) 3px
+  );
+  text-shadow: 0 0 8px rgb(124 255 154 / 0.25);
+}

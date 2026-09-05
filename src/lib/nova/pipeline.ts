@@ -5,8 +5,8 @@ import { runQa } from "./agents/qa";
 import { runSkills } from "./agents/skills";
 import { estimateRunCost } from "./catalog";
 import { analyzeIntent, runTitle } from "./intent";
-import { remember, retrieveMemory } from "./memory";
-import { getRun, updateStore } from "./store";
+import { remember } from "./memory";
+import { getRun, querySharedContext, updateStore } from "./store";
 import type { LlmId, PipelineEvent, Run } from "./types";
 
 function now() {
@@ -37,10 +37,10 @@ export async function createRun(input: {
   const models = { ...DEFAULT_MODELS, ...input.models };
   const skills = input.skills ?? [];
   const intent = analyzeIntent(description);
+  const retrieved = await querySharedContext(description, 4);
 
   let run!: Run;
   await updateStore((store) => {
-    const retrieved = retrieveMemory(store.memory, description, 4);
     run = {
       id: crypto.randomUUID(),
       title: runTitle(description),
@@ -52,7 +52,7 @@ export async function createRun(input: {
       skills,
       cost: estimateRunCost(models, skills.length),
       events: [
-        event("SYSTEM", "Pipeline opened. Product Owner is writing the spec."),
+        event("SYSTEM", "The Gang is in. Product Owner is writing the spec."),
         ...retrieved.map((hit) =>
           event("SYSTEM", `Memory hit (${hit.role}, ${(hit.score * 100).toFixed(0)}%): ${hit.text}`)
         ),
@@ -219,7 +219,7 @@ async function continueAfterCode(id: string) {
       }
       current.currentStage = "DONE";
       current.status = "complete";
-      current.events.push(event("SYSTEM", "Pipeline complete. Feature is ready for the squad to copy into the repo."));
+      current.events.push(event("SYSTEM", "The Gang is done. Feature is ready to copy into the repo."));
     });
   } else {
     await updateStore((store) => {
@@ -227,7 +227,7 @@ async function continueAfterCode(id: string) {
       if (!current) return;
       current.status = "complete";
       current.currentStage = "DONE";
-      current.events.push(event("SYSTEM", "Pipeline complete. Feature is ready for the squad to copy into the repo."));
+      current.events.push(event("SYSTEM", "The Gang is done. Feature is ready to copy into the repo."));
     });
   }
 
@@ -261,13 +261,14 @@ export async function listWorkspace() {
         .slice()
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(0, 12)
-        .map(({ id, role, runId, createdAt, text, tags }) => ({
+        .map(({ id, role, runId, createdAt, text, tags, source }) => ({
           id,
           role,
           runId,
           createdAt,
           text,
           tags,
+          source,
         })),
     },
   };

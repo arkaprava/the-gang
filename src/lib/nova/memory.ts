@@ -1,4 +1,4 @@
-import type { AgentRole, MemoryEntry } from "./types";
+import type { AgentRole, MemoryEntry, MemorySource } from "./types";
 import { tokenize } from "./text";
 
 const DIM = 48;
@@ -30,6 +30,7 @@ export function remember(input: {
   runId: string;
   text: string;
   tags: string[];
+  source?: MemorySource;
 }): MemoryEntry {
   return {
     id: crypto.randomUUID(),
@@ -39,6 +40,7 @@ export function remember(input: {
     text: input.text,
     tags: input.tags,
     vector: embed(input.text),
+    source: input.source ?? "agent",
   };
 }
 
@@ -56,29 +58,41 @@ export function retrieveMemory(entries: MemoryEntry[], query: string, limit = 4)
     .slice(0, limit);
 }
 
-export const SEED_MEMORY: Omit<MemoryEntry, "id" | "createdAt" | "vector">[] = [
+export function toVectorLiteral(vector: number[]): string {
+  return `[${vector.map((n) => (Number.isFinite(n) ? n.toFixed(6) : "0")).join(",")}]`;
+}
+
+export const SEED_MEMORY: (Omit<MemoryEntry, "createdAt" | "vector">)[] = [
   {
+    id: "11111111-1111-4111-8111-111111111111",
     role: "PO",
     runId: "seed",
     tags: ["conventions", "planning"],
-    text: "Company convention: every feature starts with user stories and explicit acceptance criteria before any code is written.",
+    source: "seed",
+    text: "The Gang convention: every feature starts with user stories and explicit acceptance criteria before any code is written.",
   },
   {
+    id: "22222222-2222-4222-8222-222222222222",
     role: "BA",
     runId: "seed",
     tags: ["architecture", "stack"],
+    source: "seed",
     text: "Preferred stack is TypeScript, REST handlers, and a typed in-memory store. Avoid extra services unless the feature requires them.",
   },
   {
+    id: "33333333-3333-4333-8333-333333333333",
     role: "DEV",
     runId: "seed",
     tags: ["code", "a11y"],
+    source: "seed",
     text: "UI convention: every input has a visible label, destructive actions confirm intent, and empty states explain the next step.",
   },
   {
+    id: "44444444-4444-4444-8444-444444444444",
     role: "QA",
     runId: "seed",
     tags: ["testing"],
+    source: "seed",
     text: "QA convention: cover unit validation, the create/list path, and accessibility labels. Fail the run if a required field is unvalidated.",
   },
 ];

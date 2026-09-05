@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { addUserContext } from "@/lib/nova/store";
 import { createRun, decideRun } from "@/lib/nova/pipeline";
 import type { LlmId } from "@/lib/nova/types";
 
@@ -41,4 +42,8 @@ export async function decidePipelineAction(formData: FormData) {
   }
   const run = await decideRun(runId, decision);
   redirect(`/?run=${run.id}`);
+}
+
+export async function addContextAction(text: string) {
+  return addUserContext(text);
 }

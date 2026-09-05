@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { ConsoleApp } from "@/components/console/console-app";
+import { TerminalApp } from "@/components/terminal/terminal-app";
 import { listWorkspace } from "@/lib/nova/pipeline";
 import { getRun } from "@/lib/nova/store";
 
@@ -15,5 +15,5 @@ export default async function Home({
   const { run: runId } = await searchParams;
   const initialWorkspace = await listWorkspace();
   const initialRun = runId ? ((await getRun(runId)) ?? null) : null;
-  return <ConsoleApp key={initialRun?.id ?? "empty"} initialWorkspace={initialWorkspace} initialRun={initialRun} />;
+  return <TerminalApp key={initialRun?.id ?? "empty"} initialWorkspace={initialWorkspace} initialRun={initialRun} />;
 }

@@ -1,39 +1,41 @@
-# Nova — Product Delivery Accelerator
+# The Gang
 
-Nova deploys an AI squad — Product Owner, Business Analyst, Developer, and QA Engineer — that turns a feature description into a plan, architecture, production TypeScript, a clickable preview, and a QA report.
+The Gang is a terminal for an AI squad — Product Owner, Business Analyst, Developer, and QA — that turns a feature brief into a plan, architecture, production TypeScript, a live preview, and a QA report.
 
-This repo is a working slice of that pipeline, including human-in-the-loop gates and a persistent memory layer.
-
-## What it does
-
-1. **You describe a feature** (for example: waitlist with email validation and CSV export).
-2. **Product Owner** writes an epic, user stories, acceptance criteria, risks, and scope. This stage is deterministic and does not call an LLM.
-3. **You approve the plan.**
-4. **Business Analyst** chooses a stack, data model, and API contracts.
-5. **Developer** generates production files (types, store, REST handlers, UI, tests, docs) and a live preview of the feature.
-6. **You approve the code.**
-7. **QA** runs unit, integration, regression, and accessibility checks against the generated surface.
-8. Optional **skills** (Code Review, Documentation, Security Audit) run after QA.
-9. **Nova Intelligence** stores every stage as a vector embedding. Later runs retrieve related memory so conventions compound.
-
-Bring-your-own LLM assignment (Claude / Mistral / Qwen) is per role. PO and QA stay deterministic. BA and DEV use the selected profile; this slice runs them locally so you can use the product without API keys. Cost estimates still show Claude pricing when you assign it.
+Shared context lives in **Postgres with pgvector**. Every role reads it. You can browse it, search it, and write into it.
 
 ## Run locally
 
 ```bash
+cp .env.example .env.local
+# set DATABASE_URL to a Postgres instance with the vector extension
 npm install
 npm run dev
 ```
 
 Open [http://localhost:43141](http://localhost:43141).
 
-## Try it
+Without `DATABASE_URL`, the gang falls back to a local JSON file. With Postgres, context is stored as `vector(48)` embeddings and retrieved with cosine distance.
 
-1. Keep the default prompt or paste your own feature.
-2. Optionally change models per role and attach post-QA skills.
-3. Click **Run Nova pipeline**.
-4. Read the plan, then **Approve and continue**.
-5. Use the **Preview** tab like a shipped feature (create, search, export).
-6. Inspect generated code, then approve it for QA.
+If this environment used a temporary Neon database, claim it within 72 hours using the `PUBLIC_POSTGRES_CLAIM_URL` printed into `.env.local`.
 
-Workspace state is stored in `.data/nova.json` (gitignored).
+## Terminal commands
+
+| Command | What it does |
+| --- | --- |
+| `run <feature>` | Brief the gang |
+| `approve` / `reject` | Human-in-the-loop gates after PO and DEV |
+| `jobs` / `open <id>` | List and inspect jobs |
+| `plan` `arch` `code` `qa` `log` | Artifacts |
+| `preview` | Clickable preview of the generated feature |
+| `context` | Show shared pgvector memory |
+| `context search <q>` | Nearest-neighbor search |
+| `context add <note>` | Write a note the next run can retrieve |
+| `help` | Command list |
+
+## Schema
+
+See `sql/schema.sql`. Tables:
+
+- `gang_runs` — job payloads
+- `gang_context` — shared memory + embeddings
