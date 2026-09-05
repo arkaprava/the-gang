@@ -32,8 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
-# nova workspace data
+# the gang workspace data
 .data/
 
 # vercel

@@ -287,7 +287,7 @@ export function run${entity}Tests() {
     language: "md",
     content: `# ${intent.title}
 
-Shipped by Nova Developer agent.
+Shipped by The Gang developer.
 
 ## Entity
 \`${entity}\` at \`/api/${slug}\`

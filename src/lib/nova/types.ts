@@ -90,6 +90,8 @@ export type SkillOutput = {
   findings: { title: string; detail: string; severity: "info" | "warn" | "pass" }[];
 };
 
+export type MemorySource = "agent" | "user" | "seed";
+
 export type MemoryEntry = {
   id: string;
   role: AgentRole;
@@ -98,6 +100,7 @@ export type MemoryEntry = {
   text: string;
   tags: string[];
   vector: number[];
+  source: MemorySource;
 };
 
 export type PipelineEvent = {
