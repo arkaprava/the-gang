@@ -1,8 +1,6 @@
-import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
+import postgres, { type Sql } from "postgres";
 import { remember, SEED_MEMORY, toVectorLiteral } from "./memory";
 import type { MemoryEntry, MemorySource, Run } from "./types";
-
-type Sql = NeonQueryFunction<false, false>;
 
 let sql: Sql | null = null;
 let ready: Promise<void> | null = null;
@@ -11,12 +9,23 @@ export function hasDatabaseUrl() {
   return Boolean(process.env.DATABASE_URL);
 }
 
+export async function closeDatabase() {
+  if (sql) {
+    await sql.end({ timeout: 1 });
+    sql = null;
+    ready = null;
+  }
+}
+
 function getSql(): Sql {
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is not set");
   }
   if (!sql) {
-    sql = neon(process.env.DATABASE_URL);
+    sql = postgres(process.env.DATABASE_URL, {
+      max: 4,
+      prepare: false,
+    });
   }
   return sql;
 }
@@ -45,6 +54,11 @@ export async function ensureDatabase() {
           embedding vector(48) NOT NULL,
           created_at timestamptz NOT NULL DEFAULT now()
         )
+      `;
+      await db`CREATE INDEX IF NOT EXISTS gang_context_created_idx ON gang_context (created_at DESC)`;
+      await db`
+        CREATE INDEX IF NOT EXISTS gang_context_embedding_hnsw_idx
+        ON gang_context USING hnsw (embedding vector_cosine_ops)
       `;
       for (const seed of SEED_MEMORY) {
         const entry = remember({
@@ -117,7 +131,7 @@ export async function upsertRun(run: Run) {
   const db = getSql();
   await db`
     INSERT INTO gang_runs (id, payload, created_at)
-    VALUES (${run.id}::uuid, ${JSON.stringify(run)}::jsonb, ${run.createdAt}::timestamptz)
+    VALUES (${run.id}::uuid, ${db.json(run)}, ${run.createdAt}::timestamptz)
     ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload
   `;
 }

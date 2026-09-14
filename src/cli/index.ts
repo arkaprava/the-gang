@@ -2,9 +2,10 @@
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadEnv } from "./env";
-import { createRun, decideRun, listWorkspace } from "../lib/nova/pipeline";
-import { addUserContext, getRun, querySharedContext } from "../lib/nova/store";
-import type { Run } from "../lib/nova/types";
+import { closeDatabase } from "../lib/gang/db";
+import { createRun, decideRun, listWorkspace } from "../lib/gang/pipeline";
+import { addUserContext, getRun, querySharedContext } from "../lib/gang/store";
+import type { Run } from "../lib/gang/types";
 import {
   HELP,
   color,
@@ -239,8 +240,12 @@ class Session {
       }
       return;
     }
-    if (arg.startsWith("search ")) {
-      const query = arg.slice(7).trim();
+    if (arg === "search" || arg.startsWith("search ")) {
+      const query = arg.slice("search".length).trim();
+      if (!query) {
+        print(color.red("usage: context search <query>"));
+        return;
+      }
       const hits = await querySharedContext(query, 12);
       if (!hits.length) {
         print("no nearby vectors.");
@@ -331,7 +336,9 @@ async function main() {
   rl.close();
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(closeDatabase);

@@ -1,4 +1,4 @@
-import type { Run } from "../lib/nova/types";
+import type { Run } from "../lib/gang/types";
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,

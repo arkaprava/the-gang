@@ -7,11 +7,14 @@
     "start": "tsx src/cli/index.ts",
     "dev": "tsx src/cli/index.ts",
     "gang": "tsx src/cli/index.ts",
-    "typecheck": "tsc --noEmit"
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/node": "^20",
