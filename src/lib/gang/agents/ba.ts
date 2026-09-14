@@ -1,12 +1,7 @@
-import { LLM_CATALOG } from "../catalog";
 import { toKebab } from "../text";
-import type { BaOutput, Intent, LlmId } from "../types";
+import type { BaOutput, Intent } from "../types";
 
-export function runBusinessAnalyst(
-  intent: Intent,
-  model: LlmId,
-  retrieved: { text: string }[]
-): BaOutput {
+export function runBusinessAnalyst(intent: Intent, retrieved: { text: string }[]): BaOutput {
   const slug = intent.slug;
   const convention = retrieved.find((m) => m.text.toLowerCase().includes("stack"))?.text;
 
@@ -18,12 +13,6 @@ export function runBusinessAnalyst(
     {
       name: "Next.js Route Handlers",
       reason: "Feature ships as REST handlers the squad can copy into a real app.",
-    },
-    {
-      name: LLM_CATALOG[model].name,
-      reason: LLM_CATALOG[model].local
-        ? "Local model — architecture work stays on-prem with no API bill."
-        : "Highest-quality reasoning for stack and data-model choices.",
     },
   ];
 

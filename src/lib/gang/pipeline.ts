@@ -3,11 +3,10 @@ import { runDeveloper } from "./agents/dev";
 import { runProductOwner } from "./agents/po";
 import { runQa } from "./agents/qa";
 import { runSkills } from "./agents/skills";
-import { estimateRunCost } from "./catalog";
 import { analyzeIntent, runTitle } from "./intent";
 import { remember } from "./memory";
-import { getRun, querySharedContext, updateStore } from "./store";
-import type { LlmId, PipelineEvent, Run } from "./types";
+import { addMemoryEntry, createRunRecord, getRun, getStore, mutateRun, querySharedContext } from "./store";
+import type { PipelineEvent, Run } from "./types";
 
 function now() {
   return new Date().toISOString();
@@ -17,60 +16,37 @@ function event(role: PipelineEvent["role"], message: string): PipelineEvent {
   return { at: now(), role, message };
 }
 
-const DEFAULT_MODELS: Record<"PO" | "BA" | "DEV" | "QA", LlmId> = {
-  PO: "claude",
-  BA: "mistral",
-  DEV: "qwen",
-  QA: "mistral",
-};
-
-export async function createRun(input: {
-  description: string;
-  models?: Partial<Record<"PO" | "BA" | "DEV" | "QA", LlmId>>;
-  skills?: string[];
-}): Promise<Run> {
+export async function createRun(input: { description: string; skills?: string[] }): Promise<Run> {
   const description = input.description.trim();
   if (description.length < 8) {
     throw new Error("Describe the feature in a bit more detail.");
   }
 
-  const models = { ...DEFAULT_MODELS, ...input.models };
   const skills = input.skills ?? [];
   const intent = analyzeIntent(description);
   const retrieved = await querySharedContext(description, 4);
 
-  let run!: Run;
-  await updateStore((store) => {
-    run = {
-      id: crypto.randomUUID(),
-      title: runTitle(description),
-      description,
-      createdAt: now(),
-      status: "running",
-      currentStage: "PO",
-      models,
-      skills,
-      cost: estimateRunCost(models, skills.length),
-      events: [
-        event("SYSTEM", "The Gang is in. Product Owner is writing the spec."),
-        ...retrieved.map((hit) =>
-          event("SYSTEM", `Memory hit (${hit.role}, ${(hit.score * 100).toFixed(0)}%): ${hit.text}`)
-        ),
-      ],
-      retrievedMemory: retrieved,
-    };
-    store.runs.unshift(run);
-  });
-
-  const po = runProductOwner(
+  const run: Run = {
+    id: crypto.randomUUID(),
+    title: runTitle(description),
     description,
-    run.retrievedMemory,
-    intent
-  );
+    createdAt: now(),
+    status: "running",
+    currentStage: "PO",
+    skills,
+    events: [
+      event("SYSTEM", "The Gang is in. Product Owner is writing the spec."),
+      ...retrieved.map((hit) =>
+        event("SYSTEM", `Memory hit (${hit.role}, ${(hit.score * 100).toFixed(0)}%): ${hit.text}`)
+      ),
+    ],
+    retrievedMemory: retrieved,
+  };
+  await createRunRecord(run);
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === run.id);
-    if (!current) return;
+  const po = runProductOwner(description, run.retrievedMemory, intent);
+
+  await mutateRun(run.id, (current) => {
     current.po = po;
     current.status = "awaiting_decision";
     current.decision = {
@@ -79,15 +55,15 @@ export async function createRun(input: {
     };
     current.events.push(event("PO", `Wrote ${po.stories.length} stories, ${po.risks.length} risks, and sprint scope.`));
     current.events.push(event("SYSTEM", "Human decision required: approve the Product Owner plan."));
-    store.memory.push(
-      remember({
-        role: "PO",
-        runId: current.id,
-        tags: ["stories", intent.slug],
-        text: `Feature "${current.title}": ${po.epic}. Scope: ${po.scope.join("; ")}`,
-      })
-    );
   });
+  await addMemoryEntry(
+    remember({
+      role: "PO",
+      runId: run.id,
+      tags: ["stories", intent.slug],
+      text: `Feature "${run.title}": ${po.epic}. Scope: ${po.scope.join("; ")}`,
+    })
+  );
 
   return (await getRun(run.id))!;
 }
@@ -100,9 +76,7 @@ export async function decideRun(id: string, action: "approve" | "reject") {
   }
 
   if (action === "reject") {
-    await updateStore((store) => {
-      const run = store.runs.find((item) => item.id === id);
-      if (!run) return;
+    await mutateRun(id, (run) => {
       run.status = "rejected";
       run.events.push(event("SYSTEM", `Human rejected the ${run.decision?.stage} stage. Pipeline stopped.`));
       run.decision = undefined;
@@ -120,41 +94,35 @@ async function continueAfterPlan(id: string) {
   const run = (await getRun(id))!;
   const intent = analyzeIntent(run.description);
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === id);
-    if (!current) return;
+  await mutateRun(id, (current) => {
     current.status = "running";
     current.currentStage = "BA";
     current.decision = undefined;
     current.events.push(event("SYSTEM", "Plan approved. Business Analyst is selecting the stack."));
   });
 
-  const ba = runBusinessAnalyst(intent, run.models.BA, run.retrievedMemory);
+  const ba = runBusinessAnalyst(intent, run.retrievedMemory);
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === id);
-    if (!current) return;
+  await mutateRun(id, (current) => {
     current.ba = ba;
     current.currentStage = "DEV";
     current.events.push(
       event("BA", `Stack: ${ba.stack.map((s) => s.name).join(", ")}. ${ba.apis.length} API endpoints specified.`)
     );
     current.events.push(event("DEV", "Developer agent is generating production files from the spec."));
-    store.memory.push(
-      remember({
-        role: "BA",
-        runId: id,
-        tags: ["architecture", intent.slug],
-        text: ba.dataModelNotes,
-      })
-    );
   });
+  await addMemoryEntry(
+    remember({
+      role: "BA",
+      runId: id,
+      tags: ["architecture", intent.slug],
+      text: ba.dataModelNotes,
+    })
+  );
 
-  const dev = runDeveloper(intent);
+  const dev = runDeveloper(intent, ba);
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === id);
-    if (!current) return;
+  await mutateRun(id, (current) => {
     current.dev = dev;
     current.status = "awaiting_decision";
     current.decision = {
@@ -163,15 +131,15 @@ async function continueAfterPlan(id: string) {
     };
     current.events.push(event("DEV", `Generated ${dev.files.length} files for ${dev.preview.entityName}.`));
     current.events.push(event("SYSTEM", "Human decision required: approve generated code."));
-    store.memory.push(
-      remember({
-        role: "DEV",
-        runId: id,
-        tags: ["code", intent.slug],
-        text: `Shipped ${dev.preview.entityName} with files ${dev.files.map((f) => f.path).join(", ")}`,
-      })
-    );
   });
+  await addMemoryEntry(
+    remember({
+      role: "DEV",
+      runId: id,
+      tags: ["code", intent.slug],
+      text: `Shipped ${dev.preview.entityName} with files ${dev.files.map((f) => f.path).join(", ")}`,
+    })
+  );
 
   return (await getRun(id))!;
 }
@@ -180,9 +148,7 @@ async function continueAfterCode(id: string) {
   const run = (await getRun(id))!;
   if (!run.po || !run.dev) throw new Error("Missing plan or code");
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === id);
-    if (!current) return;
+  await mutateRun(id, (current) => {
     current.status = "running";
     current.currentStage = "QA";
     current.decision = undefined;
@@ -191,28 +157,24 @@ async function continueAfterCode(id: string) {
 
   const qa = runQa(run.po, run.dev);
 
-  await updateStore((store) => {
-    const current = store.runs.find((item) => item.id === id);
-    if (!current) return;
+  await mutateRun(id, (current) => {
     current.qa = qa;
     current.events.push(event("QA", qa.summary));
-    store.memory.push(
-      remember({
-        role: "QA",
-        runId: id,
-        tags: ["qa", "coverage"],
-        text: `QA coverage ${qa.coverage}% for "${current.title}". ${qa.issues.length ? qa.issues.join("; ") : "No issues."}`,
-      })
-    );
     current.currentStage = current.skills.length ? "SKILLS" : "DONE";
   });
+  await addMemoryEntry(
+    remember({
+      role: "QA",
+      runId: id,
+      tags: ["qa", "coverage"],
+      text: `QA coverage ${qa.coverage}% for "${run.title}". ${qa.issues.length ? qa.issues.join("; ") : "No issues."}`,
+    })
+  );
 
   const latest = (await getRun(id))!;
   if (latest.skills.length && latest.po && latest.dev) {
     const skillResults = runSkills(latest.skills, latest.po, latest.dev);
-    await updateStore((store) => {
-      const current = store.runs.find((item) => item.id === id);
-      if (!current) return;
+    await mutateRun(id, (current) => {
       current.skillResults = skillResults;
       for (const skill of skillResults) {
         current.events.push(event("SKILL", `${skill.name}: ${skill.findings.map((f) => f.title).join("; ")}`));
@@ -222,9 +184,7 @@ async function continueAfterCode(id: string) {
       current.events.push(event("SYSTEM", "The Gang is done. Feature is ready to copy into the repo."));
     });
   } else {
-    await updateStore((store) => {
-      const current = store.runs.find((item) => item.id === id);
-      if (!current) return;
+    await mutateRun(id, (current) => {
       current.status = "complete";
       current.currentStage = "DONE";
       current.events.push(event("SYSTEM", "The Gang is done. Feature is ready to copy into the repo."));
@@ -235,7 +195,6 @@ async function continueAfterCode(id: string) {
 }
 
 export async function listWorkspace() {
-  const { getStore } = await import("./store");
   const store = await getStore();
   return {
     runs: store.runs.map((run) => ({

@@ -1,5 +1,4 @@
 export type AgentRole = "PO" | "BA" | "DEV" | "QA" | "SKILL";
-export type LlmId = "claude" | "mistral" | "qwen";
 export type FieldType =
   | "string"
   | "email"
@@ -118,9 +117,7 @@ export type Run = {
   createdAt: string;
   status: RunStatus;
   currentStage: "PO" | "BA" | "DEV" | "QA" | "SKILLS" | "DONE";
-  models: Record<"PO" | "BA" | "DEV" | "QA", LlmId>;
   skills: string[];
-  cost: { estimatedUsd: number; tokens: number; notes: string };
   events: PipelineEvent[];
   po?: PoOutput;
   ba?: BaOutput;

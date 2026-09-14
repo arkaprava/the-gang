@@ -1,5 +1,5 @@
 import { toCamel } from "../text";
-import type { DataField, DevOutput, GeneratedFile, Intent, PreviewSpec } from "../types";
+import type { BaOutput, DataField, DevOutput, GeneratedFile, Intent, PreviewSpec } from "../types";
 
 function tsType(field: DataField): string {
   if (field.type === "number") return "number";
@@ -10,7 +10,10 @@ function tsType(field: DataField): string {
 function validator(field: DataField): string {
   const value = `input.${field.name}`;
   if (field.type === "email") {
-    return `  if (${field.required ? `!${value} || ` : `${value} && `}!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(${value}))) {
+    // Double-escaped so the *generated* source contains literal \s and \. —
+    // a single backslash here is dropped by the template literal and used
+    // to emit a regex that silently accepted almost anything.
+    return `  if (${field.required ? `!${value} || ` : `${value} && `}!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(String(${value}))) {
     errors.push("${field.label} must be a valid email");
   }`;
   }
@@ -41,12 +44,15 @@ function inputType(field: DataField): string {
   return "text";
 }
 
-export function runDeveloper(intent: Intent): DevOutput {
+const TEXT_SEARCHABLE: DataField["type"][] = ["string", "email", "text", "select"];
+
+export function runDeveloper(intent: Intent, ba: BaOutput): DevOutput {
   const entity = intent.entityName;
   const camel = toCamel(entity);
   const slug = intent.slug;
   const typeName = entity;
   const fields = intent.fields;
+  const searchableFields = fields.filter((f) => TEXT_SEARCHABLE.includes(f.type));
 
   const typeFields = fields.map((f) => `  ${f.name}: ${tsType(f)};`).join("\n");
 
@@ -69,6 +75,10 @@ ${fields.map(validator).join("\n")}
 `,
   };
 
+  const searchFieldsLiteral = (searchableFields.length ? searchableFields : fields)
+    .map((f) => `"${f.name}"`)
+    .join(", ");
+
   const storeFile: GeneratedFile = {
     path: `src/lib/${slug}-store.ts`,
     language: "ts",
@@ -78,10 +88,16 @@ import { validate${entity} } from "@/types/${slug}";
 
 const records: ${typeName}[] = [];
 
+// Only these fields are matched against a search query — id and createdAt
+// are deliberately excluded so "search" doesn't match on internal ids.
+const SEARCHABLE_FIELDS = [${searchFieldsLiteral}] as const;
+
 export function list${intent.entityPlural}(query = "") {
   const q = query.trim().toLowerCase();
   const rows = q
-    ? records.filter((row) => JSON.stringify(row).toLowerCase().includes(q))
+    ? records.filter((row) =>
+        SEARCHABLE_FIELDS.some((field) => String(row[field as keyof ${typeName}] ?? "").toLowerCase().includes(q))
+      )
     : records;
   return [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -187,6 +203,13 @@ ${opts}
   })
     .join("\n");
 
+  const itemFields = fields
+    .map(
+      (field) =>
+        `          <div><span className="font-medium">${field.label}:</span> {String(item.${field.name} ?? "—")}</div>`
+    )
+    .join("\n");
+
   const componentFile: GeneratedFile = {
     path: `src/components/${slug}-board.tsx`,
     language: "tsx",
@@ -243,9 +266,11 @@ ${fieldInputs}
         {visible.length === 0 ? (
           <p>No ${intent.entityPlural.toLowerCase()} yet. Add the first one to populate this list.</p>
         ) : (
-          <ul>
+          <ul className="grid gap-2">
             {visible.map((item) => (
-              <li key={item.id}>{JSON.stringify(item)}</li>
+              <li key={item.id} className="rounded-lg border p-3 text-sm">
+${itemFields}
+              </li>
             ))}
           </ul>
         )}
@@ -287,7 +312,7 @@ export function run${entity}Tests() {
     language: "md",
     content: `# ${intent.title}
 
-Shipped by The Gang developer.
+Shipped by The Gang developer, from the Business Analyst's spec below.
 
 ## Entity
 \`${entity}\` at \`/api/${slug}\`
@@ -299,6 +324,15 @@ ${fields.map((f) => `- **${f.label}** (\`${f.name}\`, ${f.type}${f.required ? ",
 - \`GET /api/${slug}?q=\`
 - \`POST /api/${slug}\`
 - \`DELETE /api/${slug}/[id]\`
+
+## Stack (from BA)
+${ba.stack.map((s) => `- **${s.name}** — ${s.reason}`).join("\n")}
+
+## Approach (from BA)
+${ba.approach.map((a) => `- ${a}`).join("\n")}
+
+## Data model notes (from BA)
+${ba.dataModelNotes}
 `,
   };
 
@@ -317,11 +351,13 @@ ${fields.map((f) => `- **${f.label}** (\`${f.name}\`, ${f.type}${f.required ? ",
     },
   };
 
+  const files = [typesFile, storeFile, apiFile, deleteApiFile, componentFile, testFile, readme];
+
   return {
-    files: [typesFile, storeFile, apiFile, deleteApiFile, componentFile, testFile, readme],
+    files,
     preview,
     notes: [
-      `Generated ${7} production files for ${entity}.`,
+      `Generated ${files.length} production files for ${entity}.`,
       "Preview runs the same validation rules as the typed domain module.",
       `${camel} store keeps records in memory so Product can click through the feature immediately.`,
     ],

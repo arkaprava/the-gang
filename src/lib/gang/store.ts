@@ -62,52 +62,90 @@ async function persistFile(store: StoreShape) {
   await writeFile(DATA_FILE, JSON.stringify(store, null, 2), "utf8");
 }
 
-async function readStore(): Promise<StoreShape> {
+// The backend (Postgres vs. local file) is decided once per process, the
+// first time the store is touched, and a hydrated copy is kept in memory
+// from then on. Callers mutate that cached object directly and then persist
+// only the row(s) they changed — no more "read everything, clone it, diff
+// it against a snapshot" on every single mutation, and no more silently
+// hopping between backends mid-session if Postgres has a blip.
+type Backend = "postgres" | "file";
+let backend: Backend | null = null;
+let cache: StoreShape | null = null;
+let hydrating: Promise<StoreShape> | null = null;
+
+async function hydrate(): Promise<StoreShape> {
   if (hasDatabaseUrl()) {
     try {
       const [runs, memory] = await Promise.all([loadRuns(), loadContext()]);
+      backend = "postgres";
       return { runs, memory };
     } catch (error) {
-      console.error("Postgres store unavailable, using local file", error);
+      console.error("Postgres store unavailable — using the local file store for this session.", error);
     }
   }
+  backend = "file";
   return readFileStore();
 }
 
-async function persist(store: StoreShape, previous?: StoreShape) {
-  if (hasDatabaseUrl()) {
+export async function getStore(): Promise<StoreShape> {
+  if (cache) return cache;
+  if (!hydrating) hydrating = hydrate();
+  cache = await hydrating;
+  return cache;
+}
+
+async function persistRun(run: Run) {
+  if (backend === "postgres") {
     try {
-      const prevIds = new Set((previous?.runs ?? []).map((run) => run.id));
-      const prevMemory = new Set((previous?.memory ?? []).map((entry) => entry.id));
-      for (const run of store.runs) {
-        if (!prevIds.has(run.id) || JSON.stringify(previous?.runs.find((item) => item.id === run.id)) !== JSON.stringify(run)) {
-          await upsertRun(run);
-        }
-      }
-      for (const entry of store.memory) {
-        if (!prevMemory.has(entry.id)) {
-          await appendContext(entry);
-        }
-      }
+      await upsertRun(run);
       return;
     } catch (error) {
-      console.error("Postgres persist failed, writing local file", error);
+      console.error("Postgres write failed — falling back to the local file store for this session.", error);
+      backend = "file";
     }
   }
-  await persistFile(store);
+  await persistFile(await getStore());
 }
 
-export async function getStore() {
-  return withLock(() => readStore());
+async function persistMemoryEntry(entry: MemoryEntry) {
+  if (backend === "postgres") {
+    try {
+      await appendContext(entry);
+      return;
+    } catch (error) {
+      console.error("Postgres write failed — falling back to the local file store for this session.", error);
+      backend = "file";
+    }
+  }
+  await persistFile(await getStore());
 }
 
-export async function updateStore(mutator: (store: StoreShape) => void | Promise<void>) {
+export async function createRunRecord(run: Run): Promise<Run> {
   return withLock(async () => {
-    const store = await readStore();
-    const previous = structuredClone(store);
-    await mutator(store);
-    await persist(store, previous);
-    return store;
+    const store = await getStore();
+    store.runs.unshift(run);
+    await persistRun(run);
+    return run;
+  });
+}
+
+export async function mutateRun(id: string, mutator: (run: Run) => void): Promise<Run> {
+  return withLock(async () => {
+    const store = await getStore();
+    const run = store.runs.find((item) => item.id === id);
+    if (!run) throw new Error("Run not found");
+    mutator(run);
+    await persistRun(run);
+    return run;
+  });
+}
+
+export async function addMemoryEntry(entry: MemoryEntry): Promise<MemoryEntry> {
+  return withLock(async () => {
+    const store = await getStore();
+    store.memory.unshift(entry);
+    await persistMemoryEntry(entry);
+    return entry;
   });
 }
 
@@ -129,14 +167,14 @@ export function summarizeRun(run: Run) {
 }
 
 export async function querySharedContext(query: string, limit = 8) {
-  if (hasDatabaseUrl()) {
+  const store = await getStore(); // ensures `backend` has been decided
+  if (backend === "postgres") {
     try {
       return await searchContextDb(query, limit);
     } catch (error) {
       console.error("pgvector search failed, using local cosine", error);
     }
   }
-  const store = await getStore();
   return retrieveMemory(store.memory, query, limit).map((hit) => {
     const entry = store.memory.find((item) => item.id === hit.id);
     return {
@@ -157,8 +195,6 @@ export async function addUserContext(text: string, tags: string[] = ["user"]) {
     tags: tags.length ? tags : ["user"],
     source: "user",
   });
-  await updateStore((store) => {
-    store.memory.unshift(entry);
-  });
+  await addMemoryEntry(entry);
   return entry;
 }
