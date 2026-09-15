@@ -4,7 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { loadEnv } from "./env";
 import { closeDatabase } from "../lib/gang/db";
 import { createRun, decideRun, listWorkspace } from "../lib/gang/pipeline";
-import { addUserContext, getRun, querySharedContext } from "../lib/gang/store";
+import { activeBackend, addUserContext, getRun, querySharedContext } from "../lib/gang/store";
 import type { Run } from "../lib/gang/types";
 import {
   HELP,
@@ -261,7 +261,9 @@ class Session {
     if (arg.startsWith("add ")) {
       const text = arg.slice(4).trim();
       const entry = await addUserContext(text);
-      print(`stored in pgvector  ${shortId(entry.id)}`);
+      const backend = await activeBackend();
+      const where = backend === "postgres" ? "pgvector" : "the local file store (.data/gang.json)";
+      print(`stored in ${where}  ${shortId(entry.id)}`);
       await this.refresh(this.run);
       return;
     }

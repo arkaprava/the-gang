@@ -73,6 +73,15 @@ let backend: Backend | null = null;
 let cache: StoreShape | null = null;
 let hydrating: Promise<StoreShape> | null = null;
 
+// Exposed so callers can report where a write actually landed (e.g. CLI
+// confirmation messages) instead of assuming Postgres. Resolves once the
+// store has been touched at least once; call it after an operation that
+// already awaited getStore()/addMemoryEntry()/etc., not before.
+export async function activeBackend(): Promise<Backend> {
+  await getStore();
+  return backend!;
+}
+
 async function hydrate(): Promise<StoreShape> {
   if (hasDatabaseUrl()) {
     try {
