@@ -14,6 +14,18 @@ test("toPascal joins and capitalizes words", () => {
   assert.equal(toPascal(["waitlist", "signup"]), "WaitlistSignup");
 });
 
+test("toPascal always emits a valid JS/TS identifier (regression: hyphenated/digit-leading briefs)", () => {
+  // tokenize() only strips punctuation other than "-", so a brief like
+  // "sign-up flow" reaches toPascal() as the single token "sign-up" —
+  // that produced `export type Sign-upFlow = ...`, a syntax error.
+  assert.equal(toPascal(["sign-up", "flow"]), "SignUpFlow");
+  // A brief starting with a number ("365 waitlist") produced a type name
+  // starting with a digit, also a syntax error.
+  assert.equal(toPascal(["365", "waitlist"]), "Item365Waitlist");
+  assert.match(toPascal(["365", "waitlist"]), /^[A-Za-z][A-Za-z0-9]*$/);
+  assert.match(toPascal([]), /^[A-Za-z][A-Za-z0-9]*$/);
+});
+
 test("toKebab splits camelCase into hyphenated lowercase", () => {
   assert.equal(toKebab("WaitlistSignup"), "waitlist-signup");
 });

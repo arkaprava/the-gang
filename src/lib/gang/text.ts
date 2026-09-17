@@ -54,10 +54,18 @@ export function tokenize(text: string): string[] {
 }
 
 export function toPascal(words: string[]): string {
-  return words
+  // The result is spliced directly into generated source as a type/component
+  // name (`export type ${name} = ...`), so it must be a valid JS/TS
+  // identifier. Split each word on any remaining non-alphanumeric character
+  // (tokenize() only strips punctuation other than "-", so a brief like
+  // "sign-up flow" reaches here as the single token "sign-up") and guard
+  // against a leading digit, which capitalization alone can't fix.
+  const pascal = words
+    .flatMap((w) => w.split(/[^a-zA-Z0-9]+/))
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join("");
+  return pascal && !/^[0-9]/.test(pascal) ? pascal : `Item${pascal}`;
 }
 
 export function toCamel(name: string): string {

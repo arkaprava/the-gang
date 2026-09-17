@@ -45,6 +45,20 @@ test("search only matches text-ish fields, never id/createdAt", () => {
   assert.ok(!storeFile!.content.includes("JSON.stringify(row)"));
 });
 
+test("generated type/component names are valid identifiers for hyphenated and digit-leading briefs (regression)", () => {
+  for (const brief of ["Add a sign-up flow with email", "Track 365 waitlist signups"]) {
+    const intent = analyzeIntent(brief);
+    const ba = runBusinessAnalyst(intent, []);
+    const dev = runDeveloper(intent, ba);
+    // `export type ${entityName} = ...` and `export function ${entityName}Board`
+    // are spliced straight into generated source — a hyphen or leading digit
+    // there used to produce a TypeScript syntax error.
+    assert.match(intent.entityName, /^[A-Za-z][A-Za-z0-9]*$/, `bad entity name for "${brief}": ${intent.entityName}`);
+    const typesFile = dev.files.find((f) => f.path.endsWith(`types/${intent.slug}.ts`))!;
+    assert.ok(typesFile.content.includes(`export type ${intent.entityName} = {`));
+  }
+});
+
 test("the generated README carries the Business Analyst's stack and data model, not just the PO/DEV output", () => {
   const intent = analyzeIntent("Add a waitlist with email");
   const ba = runBusinessAnalyst(intent, []);
