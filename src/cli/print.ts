@@ -60,6 +60,15 @@ export function formatRun(run: Run) {
   return lines.join("\n");
 }
 
+function formatStageSource(run: Run, stage: "PO" | "BA" | "DEV" | "QA"): string | null {
+  const source = run.stageSource?.[stage];
+  if (!source) return null;
+  if (source.via === "llm") {
+    return c.dim(`via  llm (${source.provider} · ${source.model})`);
+  }
+  return c.dim(`via  template${source.note ? ` — ${source.note}` : ""}`);
+}
+
 export function formatPlan(run: Run) {
   if (!run.po) return "no plan yet.";
   const po = run.po;
@@ -71,6 +80,8 @@ export function formatPlan(run: Run) {
   }
   lines.push("", c.dim("in scope"));
   for (const item of po.scope) lines.push(`  ${item}`);
+  const source = formatStageSource(run, "PO");
+  if (source) lines.push("", source);
   return lines.join("\n");
 }
 
@@ -81,6 +92,8 @@ export function formatArch(run: Run) {
   for (const item of ba.stack) lines.push(`${c.bold(item.name)}  ${c.dim(item.reason)}`);
   lines.push("");
   for (const api of ba.apis) lines.push(`${c.cyan(api.method.padEnd(6))} ${api.path}  ${c.dim(api.purpose)}`);
+  const source = formatStageSource(run, "BA");
+  if (source) lines.push("", source);
   return lines.join("\n");
 }
 
@@ -89,7 +102,10 @@ export function formatCode(run: Run, fileQuery = "") {
   const files = run.dev.files;
   const match =
     (fileQuery ? files.find((file) => file.path.includes(fileQuery)) : undefined) ?? files[0];
-  return [`files`, ...files.map((file) => `  ${file.path}`), "", c.bold(match.path), match.content].join("\n");
+  const lines = [`files`, ...files.map((file) => `  ${file.path}`), "", c.bold(match.path), match.content];
+  const source = formatStageSource(run, "DEV");
+  if (source) lines.push("", source);
+  return lines.join("\n");
 }
 
 export function formatQa(run: Run) {
@@ -98,6 +114,44 @@ export function formatQa(run: Run) {
   const lines = [`${c.green(`${qa.coverage}%`)}  ${qa.summary}`];
   for (const test of qa.tests) {
     lines.push(`${test.passed ? c.green("PASS") : c.red("FAIL")}  ${test.name}  ${c.dim(test.detail)}`);
+  }
+  if (qa.advisoryNotes?.length) {
+    lines.push(c.dim("advisory (not a pass/fail check)"));
+    for (const note of qa.advisoryNotes) lines.push(c.dim(`  - ${note}`));
+  }
+  const source = formatStageSource(run, "QA");
+  if (source) lines.push("", source);
+  return lines.join("\n");
+}
+
+function maskKey(value: string | undefined): string {
+  if (!value) return c.dim("not set");
+  if (value.length <= 8) return c.green("set");
+  return c.green(`set (${value.slice(0, 4)}…${value.slice(-4)})`);
+}
+
+export function formatModels(run: Run | null) {
+  const provider = process.env.GANG_LLM_PROVIDER?.trim();
+  const model = process.env.GANG_LLM_MODEL?.trim();
+  const lines = [
+    c.bold("llm config"),
+    `${c.dim("GANG_LLM_PROVIDER")}  ${provider || c.dim("not set")}`,
+    `${c.dim("GANG_LLM_MODEL")}     ${model || c.dim("not set")}`,
+    "",
+    c.dim("api keys"),
+    `${"ANTHROPIC_API_KEY".padEnd(18)} ${maskKey(process.env.ANTHROPIC_API_KEY)}`,
+    `${"OPENAI_API_KEY".padEnd(18)} ${maskKey(process.env.OPENAI_API_KEY)}`,
+    `${"DEEPSEEK_API_KEY".padEnd(18)} ${maskKey(process.env.DEEPSEEK_API_KEY)}`,
+  ];
+  if (!provider || !model) {
+    lines.push("", c.dim("no provider/model configured — every stage falls back to the deterministic template."));
+  }
+  if (run) {
+    lines.push("", c.dim(`stage sources for ${shortId(run.id)}`));
+    for (const stage of ["PO", "BA", "DEV", "QA"] as const) {
+      const source = formatStageSource(run, stage);
+      lines.push(`  ${stage.padEnd(4)} ${source ?? c.dim("not run yet")}`);
+    }
   }
   return lines.join("\n");
 }
@@ -112,6 +166,7 @@ export const HELP = `commands
   context                    shared pgvector memory
   context search <query>     nearest-neighbor search
   context add <note>         write a note the next run can retrieve
+  models                     show configured LLM provider/model, api keys, and per-stage source
   clear                      clear the screen
   exit                       quit
 `;

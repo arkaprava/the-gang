@@ -81,6 +81,10 @@ export type QaOutput = {
   coverage: number;
   summary: string;
   issues: string[];
+  // LLM-only prose, kept separate from the deterministically-detected
+  // `issues` above so the two can never be conflated: `issues` is always
+  // backed by a real check, `advisoryNotes` is commentary that may be wrong.
+  advisoryNotes?: string[];
 };
 
 export type SkillOutput = {
@@ -126,6 +130,12 @@ export type Run = {
   skillResults?: SkillOutput[];
   retrievedMemory: { id: string; text: string; score: number; role: AgentRole }[];
   decision?: { stage: "PO" | "DEV"; prompt: string };
+  // Provenance for each stage's output: did it come from a configured LLM,
+  // or the deterministic template fallback? Set by pipeline.ts after every
+  // stage. Absent entirely on runs from before this field existed.
+  stageSource?: Partial<
+    Record<"PO" | "BA" | "DEV" | "QA", { via: "llm" | "template"; provider?: string; model?: string; note?: string }>
+  >;
 };
 
 export type StoreShape = {

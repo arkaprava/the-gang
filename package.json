@@ -13,12 +13,13 @@
     "test": "tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
     "dotenv": "^17.2.3",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "typescript": "^5"
   },
   "devDependencies": {
     "@types/node": "^20",
-    "tsx": "^4.21.0",
-    "typescript": "^5"
+    "tsx": "^4.21.0"
   }
 }

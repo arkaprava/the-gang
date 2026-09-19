@@ -1,12 +1,18 @@
-import { runBusinessAnalyst } from "./agents/ba";
-import { runDeveloper } from "./agents/dev";
-import { runProductOwner } from "./agents/po";
-import { runQa } from "./agents/qa";
+import { produceBaOutput } from "./agents/ba";
+import { produceDevOutput } from "./agents/dev";
+import { producePoOutput } from "./agents/po";
+import { produceQaOutput } from "./agents/qa";
 import { runSkills } from "./agents/skills";
 import { analyzeIntent, runTitle } from "./intent";
+import { getLlmClient } from "./llm/client";
+import type { GenerateResult } from "./llm/withFallback";
 import { remember } from "./memory";
 import { addMemoryEntry, createRunRecord, getRun, getStore, mutateRun, querySharedContext } from "./store";
 import type { PipelineEvent, Run } from "./types";
+
+function stageSourceOf(result: GenerateResult<unknown>): NonNullable<Run["stageSource"]>[keyof NonNullable<Run["stageSource"]>] {
+  return { via: result.source, provider: result.provider, model: result.model, note: result.note };
+}
 
 function now() {
   return new Date().toISOString();
@@ -44,7 +50,9 @@ export async function createRun(input: { description: string; skills?: string[] 
   };
   await createRunRecord(run);
 
-  const po = runProductOwner(description, run.retrievedMemory, intent);
+  const client = getLlmClient();
+  const poResult = await producePoOutput(client, description, run.retrievedMemory, intent);
+  const po = poResult.output;
 
   await mutateRun(run.id, (current) => {
     current.po = po;
@@ -53,7 +61,8 @@ export async function createRun(input: { description: string; skills?: string[] 
       stage: "PO",
       prompt: "Approve this plan so the Business Analyst and Developer can continue.",
     };
-    current.events.push(event("PO", `Wrote ${po.stories.length} stories, ${po.risks.length} risks, and sprint scope.`));
+    current.stageSource = { ...current.stageSource, PO: stageSourceOf(poResult) };
+    current.events.push(event("PO", `Wrote ${po.stories.length} stories, ${po.risks.length} risks, and sprint scope. (${poResult.source})`));
     current.events.push(event("SYSTEM", "Human decision required: approve the Product Owner plan."));
   });
   await addMemoryEntry(
@@ -93,6 +102,7 @@ export async function decideRun(id: string, action: "approve" | "reject") {
 async function continueAfterPlan(id: string) {
   const run = (await getRun(id))!;
   const intent = analyzeIntent(run.description);
+  const client = getLlmClient();
 
   await mutateRun(id, (current) => {
     current.status = "running";
@@ -101,13 +111,15 @@ async function continueAfterPlan(id: string) {
     current.events.push(event("SYSTEM", "Plan approved. Business Analyst is selecting the stack."));
   });
 
-  const ba = runBusinessAnalyst(intent, run.retrievedMemory);
+  const baResult = await produceBaOutput(client, intent, run.retrievedMemory);
+  const ba = baResult.output;
 
   await mutateRun(id, (current) => {
     current.ba = ba;
     current.currentStage = "DEV";
+    current.stageSource = { ...current.stageSource, BA: stageSourceOf(baResult) };
     current.events.push(
-      event("BA", `Stack: ${ba.stack.map((s) => s.name).join(", ")}. ${ba.apis.length} API endpoints specified.`)
+      event("BA", `Stack: ${ba.stack.map((s) => s.name).join(", ")}. ${ba.apis.length} API endpoints specified. (${baResult.source})`)
     );
     current.events.push(event("DEV", "Developer agent is generating production files from the spec."));
   });
@@ -120,7 +132,8 @@ async function continueAfterPlan(id: string) {
     })
   );
 
-  const dev = runDeveloper(intent, ba);
+  const devResult = await produceDevOutput(client, intent, ba);
+  const dev = devResult.output;
 
   await mutateRun(id, (current) => {
     current.dev = dev;
@@ -129,7 +142,8 @@ async function continueAfterPlan(id: string) {
       stage: "DEV",
       prompt: "Review the generated code and live preview. Approve to send it to QA.",
     };
-    current.events.push(event("DEV", `Generated ${dev.files.length} files for ${dev.preview.entityName}.`));
+    current.stageSource = { ...current.stageSource, DEV: stageSourceOf(devResult) };
+    current.events.push(event("DEV", `Generated ${dev.files.length} files for ${dev.preview.entityName}. (${devResult.source})`));
     current.events.push(event("SYSTEM", "Human decision required: approve generated code."));
   });
   await addMemoryEntry(
@@ -147,6 +161,7 @@ async function continueAfterPlan(id: string) {
 async function continueAfterCode(id: string) {
   const run = (await getRun(id))!;
   if (!run.po || !run.dev) throw new Error("Missing plan or code");
+  const client = getLlmClient();
 
   await mutateRun(id, (current) => {
     current.status = "running";
@@ -155,10 +170,12 @@ async function continueAfterCode(id: string) {
     current.events.push(event("QA", "QA Engineer is running unit, integration, regression, and accessibility checks."));
   });
 
-  const qa = runQa(run.po, run.dev);
+  const qaResult = await produceQaOutput(client, run.po, run.dev);
+  const qa = qaResult.output;
 
   await mutateRun(id, (current) => {
     current.qa = qa;
+    current.stageSource = { ...current.stageSource, QA: stageSourceOf(qaResult) };
     current.events.push(event("QA", qa.summary));
     current.currentStage = current.skills.length ? "SKILLS" : "DONE";
   });

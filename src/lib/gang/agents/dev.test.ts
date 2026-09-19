@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runBusinessAnalyst } from "./ba";
-import { runDeveloper } from "./dev";
+import { produceDevOutput, runDeveloper } from "./dev";
 import { analyzeIntent } from "../intent";
+import type { LlmClient } from "../llm/types";
 
 test("email validator rejects malformed addresses (regression: unescaped \\s/\\. in the generated regex)", () => {
   const intent = analyzeIntent("Add a waitlist with email");
@@ -57,6 +58,85 @@ test("generated type/component names are valid identifiers for hyphenated and di
     const typesFile = dev.files.find((f) => f.path.endsWith(`types/${intent.slug}.ts`))!;
     assert.ok(typesFile.content.includes(`export type ${intent.entityName} = {`));
   }
+});
+
+function fakeClient(complete: LlmClient["complete"]): LlmClient {
+  return { provider: "claude", model: "test-model", complete };
+}
+
+test("produceDevOutput: no client configured falls back to the deterministic generator", async () => {
+  const intent = analyzeIntent("Add a waitlist with email");
+  const ba = runBusinessAnalyst(intent, []);
+  const result = await produceDevOutput(null, intent, ba);
+  assert.equal(result.source, "template");
+  assert.deepEqual(result.output, runDeveloper(intent, ba));
+});
+
+test("produceDevOutput: a valid LLM response matching the expected file set is used as-is", async () => {
+  const intent = analyzeIntent("Add a waitlist with email");
+  const ba = runBusinessAnalyst(intent, []);
+  const expectedPaths = runDeveloper(intent, ba).files.map((f) => f.path);
+  const client = fakeClient(async () =>
+    JSON.stringify({
+      files: expectedPaths.map((path) => ({
+        path,
+        language: path.endsWith(".tsx") ? "tsx" : path.endsWith(".md") ? "md" : "ts",
+        content: path.endsWith(".md") ? "# ok" : "export const ok = true;\n",
+      })),
+    })
+  );
+  const result = await produceDevOutput(client, intent, ba);
+  assert.equal(result.source, "llm");
+  assert.deepEqual(result.output.files.map((f) => f.path).sort(), expectedPaths.slice().sort());
+});
+
+test("produceDevOutput: a response with the wrong file count falls back to the deterministic generator", async () => {
+  const intent = analyzeIntent("Add a waitlist with email");
+  const ba = runBusinessAnalyst(intent, []);
+  const client = fakeClient(async () =>
+    JSON.stringify({ files: [{ path: "src/not-the-right-file.ts", language: "ts", content: "export const x = 1;" }] })
+  );
+  const result = await produceDevOutput(client, intent, ba);
+  assert.equal(result.source, "template");
+  assert.match(result.note ?? "", /files has 1 entries, expected/);
+});
+
+test("produceDevOutput: a response with a right-sized but wrong-named file set falls back to the deterministic generator", async () => {
+  const intent = analyzeIntent("Add a waitlist with email");
+  const ba = runBusinessAnalyst(intent, []);
+  const expectedPaths = runDeveloper(intent, ba).files.map((f) => f.path);
+  const client = fakeClient(async () =>
+    JSON.stringify({
+      // right count, but the first path is renamed so it's not in the expected set
+      files: expectedPaths.map((path, i) => ({
+        path: i === 0 ? "src/not-the-right-file.ts" : path,
+        language: path.endsWith(".tsx") ? "tsx" : path.endsWith(".md") ? "md" : "ts",
+        content: path.endsWith(".md") ? "# ok" : "export const ok = true;\n",
+      })),
+    })
+  );
+  const result = await produceDevOutput(client, intent, ba);
+  assert.equal(result.source, "template");
+  assert.match(result.note ?? "", /not one of the expected/);
+});
+
+test("produceDevOutput: syntactically broken generated code falls back to the deterministic generator (the exact bug class fixed previously)", async () => {
+  const intent = analyzeIntent("Add a waitlist with email");
+  const ba = runBusinessAnalyst(intent, []);
+  const expectedPaths = runDeveloper(intent, ba).files.map((f) => f.path);
+  const typesPath = expectedPaths.find((p) => p.includes("types/") && !p.endsWith(".test.ts"))!;
+  const client = fakeClient(async () =>
+    JSON.stringify({
+      files: expectedPaths.map((path) => ({
+        path,
+        language: path.endsWith(".tsx") ? "tsx" : path.endsWith(".md") ? "md" : "ts",
+        content: path === typesPath ? "export type Sign-upFlow = { id: string };" : path.endsWith(".md") ? "# ok" : "export const ok = true;\n",
+      })),
+    })
+  );
+  const result = await produceDevOutput(client, intent, ba);
+  assert.equal(result.source, "template");
+  assert.match(result.note ?? "", /syntax check/);
 });
 
 test("the generated README carries the Business Analyst's stack and data model, not just the PO/DEV output", () => {

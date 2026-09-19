@@ -11,6 +11,7 @@ import {
   color,
   formatArch,
   formatCode,
+  formatModels,
   formatPlan,
   formatQa,
   formatRun,
@@ -113,6 +114,9 @@ class Session {
         break;
       case "context":
         await this.context(arg);
+        break;
+      case "models":
+        print(formatModels(this.run));
         break;
       default:
         print(color.red(`unknown command '${verb}'. try help.`));
