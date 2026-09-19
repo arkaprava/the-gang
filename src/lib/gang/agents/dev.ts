@@ -1,3 +1,7 @@
+import { generateWithFallback, type GenerateResult } from "../llm/withFallback";
+import type { LlmClient } from "../llm/types";
+import { expect, isObject, isString } from "../llm/validate";
+import { checkTsSyntax } from "./devSyntaxCheck";
 import { toCamel } from "../text";
 import type { BaOutput, DataField, DevOutput, GeneratedFile, Intent, PreviewSpec } from "../types";
 
@@ -362,4 +366,75 @@ ${ba.dataModelNotes}
       `${camel} store keeps records in memory so Product can click through the feature immediately.`,
     ],
   };
+}
+
+// DEV is the highest-risk LLM-backed stage: a syntactically-valid JSON
+// response can still contain broken TypeScript (this is exactly the bug
+// class fixed in a prior session — e.g. `export type Sign-upFlow = {` from
+// a hyphenated brief). A successful API call alone is not accepted; the
+// generated files themselves are checked before use.
+function parseGeneratedFiles(json: unknown, expectedPaths: readonly string[]): GeneratedFile[] {
+  expect(isObject(json), "response is not an object");
+  const { files } = json;
+  expect(Array.isArray(files), "files is not an array");
+  expect(files.length === expectedPaths.length, `files has ${files.length} entries, expected ${expectedPaths.length}`);
+
+  const expected = new Set(expectedPaths);
+  const parsed = files.map((file, index) => {
+    expect(isObject(file), `files[${index}] is not an object`);
+    const { path, language, content } = file;
+    expect(isString(path) && isString(language) && isString(content), `files[${index}] is missing path/language/content`);
+    expect(expected.has(path), `files[${index}].path "${path}" is not one of the expected generated files`);
+    return { path, language, content };
+  });
+
+  const seenPaths = new Set(parsed.map((file) => file.path));
+  expect(seenPaths.size === expectedPaths.length, "response has duplicate or missing file paths");
+  return parsed;
+}
+
+const DEV_SYSTEM_PROMPT = `You are the Developer in a small engineering "gang" (PO, BA, DEV, QA). Generate production TypeScript/React source for a feature that will be copied into a Next.js App Router project.
+
+Respond with ONLY a single JSON object, no prose, no markdown code fence, matching exactly this shape:
+{ "files": [{ "path": string, "language": "ts"|"tsx"|"md", "content": string }] }
+
+Requirements:
+- Generate EXACTLY the file paths you are given, one entry per path, no extra or missing files.
+- Every .ts/.tsx file's "content" MUST be syntactically valid TypeScript — no invalid identifiers, no unbalanced braces.
+- Type/component names must be valid JS/TS identifiers (no hyphens, no leading digits).
+- Route handlers use \`import { NextResponse } from "next/server"\`. The store module is in-memory. The component is a client component ("use client") using fetch against the generated API routes.
+- Keep field validation, search, and CSV export (if listed) behaviorally equivalent to what a careful engineer would write for the given entity/fields.`;
+
+export async function produceDevOutput(
+  client: LlmClient | null,
+  intent: Intent,
+  ba: BaOutput
+): Promise<GenerateResult<DevOutput>> {
+  // Computed eagerly and always: it's both the fallback and the source of
+  // truth for the expected-path allowlist below, so there's no separately
+  // maintained path table that could drift out of sync with the real
+  // generator.
+  const deterministic = runDeveloper(intent, ba);
+  const expectedPaths = deterministic.files.map((file) => file.path);
+
+  const prompt = `Entity: ${intent.entityName} (slug: ${intent.slug})
+Fields: ${intent.fields.map((f) => `${f.name}:${f.type}${f.required ? "*" : ""}`).join(", ")}
+Data model: ${ba.dataModelNotes}
+Features: search=${intent.capabilities.search}, csvExport=${intent.capabilities.exportCsv}, status=${intent.capabilities.status}
+
+Generate exactly these files:
+${expectedPaths.map((path) => `- ${path}`).join("\n")}`;
+
+  return generateWithFallback({
+    client,
+    system: DEV_SYSTEM_PROMPT,
+    prompt,
+    parse: (json) => {
+      const files = parseGeneratedFiles(json, expectedPaths);
+      const diagnostics = checkTsSyntax(files);
+      expect(diagnostics.length === 0, `generated code failed a syntax check: ${diagnostics.slice(0, 3).join("; ")}`);
+      return { ...deterministic, files };
+    },
+    fallback: () => deterministic,
+  });
 }

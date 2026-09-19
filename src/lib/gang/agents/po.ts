@@ -1,4 +1,7 @@
 import { analyzeIntent } from "../intent";
+import { generateWithFallback, type GenerateResult } from "../llm/withFallback";
+import type { LlmClient } from "../llm/types";
+import { expect, isObject, isString, isStringArray } from "../llm/validate";
 import type { Intent, PoOutput, UserStory } from "../types";
 
 function story(
@@ -132,4 +135,70 @@ export function runProductOwner(
       "Mobile native clients",
     ],
   };
+}
+
+function parseUserStory(x: unknown, index: number): UserStory {
+  expect(isObject(x), `stories[${index}] is not an object`);
+  const { id, title, asA, iWant, soThat, acceptance } = x;
+  expect(isString(id) && isString(title) && isString(asA) && isString(iWant) && isString(soThat), `stories[${index}] is missing a required string field`);
+  expect(isStringArray(acceptance), `stories[${index}].acceptance is not a string array`);
+  return { id, title, asA, iWant, soThat, acceptance };
+}
+
+function parseRisk(x: unknown, index: number): PoOutput["risks"][number] {
+  expect(isObject(x), `risks[${index}] is not an object`);
+  const { title, severity, mitigation } = x;
+  expect(isString(title) && isString(mitigation), `risks[${index}] is missing title/mitigation`);
+  expect(severity === "low" || severity === "medium" || severity === "high", `risks[${index}].severity is not low/medium/high`);
+  return { title, severity, mitigation };
+}
+
+export function parsePoOutput(json: unknown): PoOutput {
+  expect(isObject(json), "response is not an object");
+  const { epic, summary, stories, risks, scope, outOfScope } = json;
+  expect(isString(epic) && isString(summary), "epic/summary missing");
+  expect(Array.isArray(stories) && stories.length > 0, "stories is empty or not an array");
+  expect(Array.isArray(risks), "risks is not an array");
+  expect(isStringArray(scope) && isStringArray(outOfScope), "scope/outOfScope is not a string array");
+  return {
+    epic,
+    summary,
+    stories: stories.map(parseUserStory),
+    risks: risks.map(parseRisk),
+    scope,
+    outOfScope,
+  };
+}
+
+const PO_SYSTEM_PROMPT = `You are the Product Owner in a small engineering "gang" (PO, BA, DEV, QA). Given a one-line feature brief, write a concrete delivery spec.
+
+Respond with ONLY a single JSON object, no prose, no markdown code fence, matching exactly this shape:
+{
+  "epic": string,
+  "summary": string (1-2 sentences, references the brief),
+  "stories": [{ "id": "US-1", "title": string, "asA": string (an actor/role), "iWant": string, "soThat": string, "acceptance": string[] }],
+  "risks": [{ "title": string, "severity": "low"|"medium"|"high", "mitigation": string }],
+  "scope": string[],
+  "outOfScope": string[]
+}
+Write at least 2 stories and at least 1 risk. Keep acceptance criteria concrete and testable.`;
+
+export async function producePoOutput(
+  client: LlmClient | null,
+  description: string,
+  retrieved: { text: string }[],
+  intent: Intent = analyzeIntent(description)
+): Promise<GenerateResult<PoOutput>> {
+  const memoryContext = retrieved.length
+    ? `Relevant prior conventions:\n${retrieved.map((r) => `- ${r.text}`).join("\n")}`
+    : "No prior conventions matched.";
+  const prompt = `Feature brief: "${description}"\nEntity: ${intent.entityName} (actor: ${intent.actor})\nFields: ${intent.fields.map((f) => `${f.name}:${f.type}${f.required ? "*" : ""}`).join(", ")}\n${memoryContext}`;
+
+  return generateWithFallback({
+    client,
+    system: PO_SYSTEM_PROMPT,
+    prompt,
+    parse: parsePoOutput,
+    fallback: () => runProductOwner(description, retrieved, intent),
+  });
 }

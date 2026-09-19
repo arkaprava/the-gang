@@ -1,3 +1,6 @@
+import { generateWithFallback, type GenerateResult } from "../llm/withFallback";
+import type { LlmClient } from "../llm/types";
+import { expect, isObject, isString, isStringArray } from "../llm/validate";
 import type { DevOutput, PoOutput, QaOutput, TestResult } from "../types";
 
 function check(name: string, type: TestResult["type"], passed: boolean, detail: string): TestResult {
@@ -79,4 +82,41 @@ export function runQa(po: PoOutput, dev: DevOutput): QaOutput {
         : `QA found ${issues.length} gap(s). Remaining checks passed.`,
     issues,
   };
+}
+
+// QA is LLM-backed for prose only. `runQa` above always runs first and is
+// the sole source of `tests`/`coverage`/`issues` — the pass/fail verdicts
+// never come from the LLM. This is deliberate: the old fake QA already had
+// a credibility problem (it once reported "100% coverage" on code that
+// didn't compile), and letting an LLM write verdicts instead of a
+// deterministic checker would make that worse, not better. If the LLM call
+// fails, `qa.summary` is used exactly as `runQa` produced it — this stage
+// can never end up worse off than it is today.
+function parseQaProse(json: unknown): { summary: string; advisoryNotes?: string[] } {
+  expect(isObject(json), "response is not an object");
+  const { summary, advisoryNotes } = json;
+  expect(isString(summary) && summary.length > 0, "summary is missing");
+  expect(advisoryNotes === undefined || isStringArray(advisoryNotes), "advisoryNotes is not a string array");
+  return { summary, advisoryNotes };
+}
+
+const QA_SYSTEM_PROMPT = `You are the QA Engineer in a small engineering "gang" (PO, BA, DEV, QA). You are given the deterministic test results already computed for this run — you do NOT decide pass/fail. Write a short human-readable summary and, optionally, advisory notes (things worth a human's attention that aren't covered by the listed checks).
+
+Respond with ONLY a single JSON object, no prose, no markdown code fence, matching exactly this shape:
+{ "summary": string (1-2 sentences), "advisoryNotes": string[] (optional, omit if none) }`;
+
+export async function produceQaOutput(client: LlmClient | null, po: PoOutput, dev: DevOutput): Promise<GenerateResult<QaOutput>> {
+  const qa = runQa(po, dev);
+  const prompt = `Coverage: ${qa.coverage}%. Checks:\n${qa.tests.map((t) => `- [${t.passed ? "PASS" : "FAIL"}] ${t.name}: ${t.detail}`).join("\n")}\nIssues: ${qa.issues.length ? qa.issues.join("; ") : "none"}`;
+
+  return generateWithFallback({
+    client,
+    system: QA_SYSTEM_PROMPT,
+    prompt,
+    parse: (json) => {
+      const prose = parseQaProse(json);
+      return { ...qa, summary: prose.summary, advisoryNotes: prose.advisoryNotes };
+    },
+    fallback: () => qa,
+  });
 }
